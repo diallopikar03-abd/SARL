@@ -3,7 +3,6 @@
 session_start();
 
 require 'db.php';
-include 'header.php';
 
 $erreur = "";
 
@@ -131,6 +130,8 @@ if (isset($_POST['login'])) {
         }
     }
 }
+include 'header.php';
+
 
 ?>
 
