@@ -7,7 +7,7 @@ header('Content-Type: text/html; charset=utf-8');
 
 /*
 |--------------------------------------------------------------------------
-| 1. CONNEXION BDD
+| 1. CONNEXION À LA BASE DE DONNÉES
 |--------------------------------------------------------------------------
 */
 
@@ -18,11 +18,9 @@ try {
         "root",
         "",
         [
-            PDO::ATTR_ERRMODE =>
-                PDO::ERRMODE_EXCEPTION,
-
-            PDO::ATTR_DEFAULT_FETCH_MODE =>
-                PDO::FETCH_ASSOC
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false
         ]
     );
 
@@ -48,19 +46,35 @@ $id_commande = filter_input(
 );
 
 
+/*
+|--------------------------------------------------------------------------
+| Si l'ID n'est pas dans l'URL, chercher dans la session
+|--------------------------------------------------------------------------
+*/
+
 if (!$id_commande) {
 
-    $id_commande =
-        isset($_SESSION['id_commande'])
-            ? (int) $_SESSION['id_commande']
-            : 0;
+    if (isset($_SESSION['id_commande'])) {
+
+        $id_commande = (int) $_SESSION['id_commande'];
+
+    } else {
+
+        $id_commande = 0;
+    }
 }
 
 
+/*
+|--------------------------------------------------------------------------
+| Vérifier l'ID
+|--------------------------------------------------------------------------
+*/
+
 if ($id_commande <= 0) {
 
-    die("
-        <div style='
+    die('
+        <div style="
             max-width:600px;
             margin:50px auto;
             padding:25px;
@@ -68,17 +82,17 @@ if ($id_commande <= 0) {
             background:#fee2e2;
             color:#991b1b;
             border-radius:10px;
-        '>
+        ">
 
-            <h2>Commande introuvable</h2>
+            <h2>❌ Commande introuvable</h2>
 
             <p>
                 Aucun identifiant de commande valide
-                n'a été fourni.
+                n\'a été fourni.
             </p>
 
         </div>
-    ");
+    ');
 }
 
 
@@ -88,28 +102,29 @@ if ($id_commande <= 0) {
 |--------------------------------------------------------------------------
 */
 
-$stmtCommande = $pdo->prepare("
-    SELECT
-        id_commande,
-        numero_commande,
-        montant_total,
-        statut
-    FROM commandes
-    WHERE id_commande = ?
-    LIMIT 1
-");
+try {
 
-$stmtCommande->execute([
-    $id_commande
-]);
+    $stmtCommande = $pdo->prepare("
+        SELECT
+            id_commande,
+            numero_commande,
+            montant_total,
+            statut
+        FROM commandes
+        WHERE id_commande = ?
+        LIMIT 1
+    ");
 
-$commande = $stmtCommande->fetch();
+    $stmtCommande->execute([
+        $id_commande
+    ]);
 
+    $commande = $stmtCommande->fetch();
 
-if (!$commande) {
+} catch (PDOException $e) {
 
-    die("
-        <div style='
+    die('
+        <div style="
             max-width:600px;
             margin:50px auto;
             padding:25px;
@@ -117,35 +132,64 @@ if (!$commande) {
             background:#fee2e2;
             color:#991b1b;
             border-radius:10px;
-        '>
+        ">
 
-            <h2>Commande introuvable</h2>
+            <h2>❌ Erreur</h2>
 
             <p>
-                Cette commande n'existe pas.
+                Impossible de récupérer la commande.
             </p>
 
         </div>
-    ");
+    ');
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| 4. INFORMATIONS COMMANDE
+| Commande inexistante
 |--------------------------------------------------------------------------
 */
 
-$montant =
-    (float) $commande['montant_total'];
+if (!$commande) {
 
-$numero_commande =
-    !empty($commande['numero_commande'])
-        ? $commande['numero_commande']
-        : 'CMD-' . $id_commande;
+    die('
+        <div style="
+            max-width:600px;
+            margin:50px auto;
+            padding:25px;
+            font-family:Arial;
+            background:#fee2e2;
+            color:#991b1b;
+            border-radius:10px;
+        ">
 
-$statut_commande =
-    $commande['statut'];
+            <h2>❌ Commande introuvable</h2>
+
+            <p>
+                Cette commande n\'existe pas.
+            </p>
+
+        </div>
+    ');
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| 4. INFORMATIONS DE LA COMMANDE
+|--------------------------------------------------------------------------
+*/
+
+$montant = (float) $commande['montant_total'];
+
+
+$numero_commande = !empty($commande['numero_commande'])
+    ? $commande['numero_commande']
+    : 'CMD-' . $id_commande;
+
+
+$statut_commande = $commande['statut'];
 
 
 /*
@@ -156,8 +200,8 @@ $statut_commande =
 
 if ($montant <= 0) {
 
-    die("
-        <div style='
+    die('
+        <div style="
             max-width:600px;
             margin:50px auto;
             padding:25px;
@@ -165,48 +209,30 @@ if ($montant <= 0) {
             background:#fee2e2;
             color:#991b1b;
             border-radius:10px;
-        '>
+        ">
 
-            <h2>Montant invalide</h2>
+            <h2>❌ Montant invalide</h2>
 
             <p>
                 Le montant de cette commande est invalide.
             </p>
 
         </div>
-    ");
+    ');
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| 6. VÉRIFIER SI UN PAIEMENT EXISTE DÉJÀ
+| 6. VARIABLES
 |--------------------------------------------------------------------------
 */
 
-$stmtPaiement = $pdo->prepare("
-    SELECT
-        id_paiement,
-        reference_transaction,
-        reference_commande,
-        methode,
-        telephone_client,
-        montant,
-        mode_paiement,
-        statut,
-        date_paiement
-    FROM paiements
-    WHERE id_commande = ?
-    ORDER BY id_paiement DESC
-    LIMIT 1
-");
+$erreur = '';
 
-$stmtPaiement->execute([
-    $id_commande
-]);
+$succes = '';
 
-$paiement_existant =
-    $stmtPaiement->fetch();
+$reference_transaction = '';
 
 
 /*
@@ -220,22 +246,90 @@ $numero_orange = '+224 628 536 273';
 
 /*
 |--------------------------------------------------------------------------
-| 8. VARIABLES
+| 8. VÉRIFIER SI UN PAIEMENT EXISTE DÉJÀ
+|--------------------------------------------------------------------------
+|
+| IMPORTANT :
+| On utilise uniquement les colonnes réellement utilisées :
+|
+| id_paiement
+| reference_transaction
+| reference_commande
+| methode
+| telephone_client
+| montant
+| statut
+| date_paiement
+|
+| On ne demande PAS "mode_paiement".
 |--------------------------------------------------------------------------
 */
 
-$erreur = '';
-$succes = '';
+try {
 
-$reference_commande = 'CMD_' .
-    $id_commande . '_' .
-    date('YmdHis') . '_' .
-    random_int(1000, 9999);
+    $stmtPaiement = $pdo->prepare("
+        SELECT
+            id_paiement,
+            reference_transaction,
+            reference_commande,
+            methode,
+            telephone_client,
+            montant,
+            statut,
+            date_paiement
+        FROM paiements
+        WHERE id_commande = ?
+        ORDER BY id_paiement DESC
+        LIMIT 1
+    ");
+
+    $stmtPaiement->execute([
+        $id_commande
+    ]);
+
+    $paiement_existant = $stmtPaiement->fetch();
+
+} catch (PDOException $e) {
+
+    die('
+        <div style="
+            max-width:600px;
+            margin:50px auto;
+            padding:25px;
+            font-family:Arial;
+            background:#fee2e2;
+            color:#991b1b;
+            border-radius:10px;
+        ">
+
+            <h2>❌ Erreur de paiement</h2>
+
+            <p>
+                Impossible de vérifier les paiements existants.
+            </p>
+
+        </div>
+    ');
+}
 
 
 /*
 |--------------------------------------------------------------------------
-| 9. TRAITEMENT DU PAIEMENT
+| 9. RÉFÉRENCE DE COMMANDE
+|--------------------------------------------------------------------------
+*/
+
+$reference_commande = 'CMD_'
+    . $id_commande
+    . '_'
+    . date('YmdHis')
+    . '_'
+    . random_int(1000, 9999);
+
+
+/*
+|--------------------------------------------------------------------------
+| 10. TRAITEMENT DU FORMULAIRE
 |--------------------------------------------------------------------------
 */
 
@@ -244,46 +338,61 @@ if (
     && !$paiement_existant
 ) {
 
-    $id_commande_post =
-        filter_input(
-            INPUT_POST,
-            'id_commande',
-            FILTER_VALIDATE_INT
-        );
 
+    /*
+    |--------------------------------------------------------------------------
+    | ID commande envoyé par le formulaire
+    |--------------------------------------------------------------------------
+    */
 
-    $telephone_client =
-        trim(
-            $_POST['telephone_client'] ?? ''
-        );
-
-
-    $reference_transaction =
-        trim(
-            $_POST['reference_transaction'] ?? ''
-        );
+    $id_commande_post = filter_input(
+        INPUT_POST,
+        'id_commande',
+        FILTER_VALIDATE_INT
+    );
 
 
     /*
     |--------------------------------------------------------------------------
-    | Vérifier l'ID
+    | Téléphone
+    |--------------------------------------------------------------------------
+    */
+
+    $telephone_client = trim(
+        $_POST['telephone_client'] ?? ''
+    );
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Référence transaction
+    |--------------------------------------------------------------------------
+    */
+
+    $reference_transaction = trim(
+        $_POST['reference_transaction'] ?? ''
+    );
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | 10.1 Vérifier l'ID de commande
     |--------------------------------------------------------------------------
     */
 
     if (
-        !$id_commande_post ||
-        $id_commande_post != $id_commande
+        !$id_commande_post
+        || (int) $id_commande_post !== (int) $id_commande
     ) {
 
-        $erreur =
-            "Commande invalide.";
+        $erreur = "Commande invalide.";
 
     }
 
 
     /*
     |--------------------------------------------------------------------------
-    | Vérifier le téléphone
+    | 10.2 Vérifier le téléphone
     |--------------------------------------------------------------------------
     */
 
@@ -297,7 +406,7 @@ if (
 
     /*
     |--------------------------------------------------------------------------
-    | Vérifier la référence
+    | 10.3 Vérifier la référence
     |--------------------------------------------------------------------------
     */
 
@@ -311,13 +420,13 @@ if (
 
     /*
     |--------------------------------------------------------------------------
-    | Vérifier téléphone
+    | 10.4 Vérifier la longueur du téléphone
     |--------------------------------------------------------------------------
     */
 
     elseif (
-        strlen($telephone_client) < 8 ||
-        strlen($telephone_client) > 20
+        strlen($telephone_client) < 8
+        || strlen($telephone_client) > 20
     ) {
 
         $erreur =
@@ -328,7 +437,21 @@ if (
 
     /*
     |--------------------------------------------------------------------------
-    | Enregistrer
+    | 10.5 Vérifier la longueur de la référence
+    |--------------------------------------------------------------------------
+    */
+
+    elseif (strlen($reference_transaction) > 100) {
+
+        $erreur =
+            "La référence de transaction est trop longue.";
+
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | 10.6 ENREGISTRER LE PAIEMENT
     |--------------------------------------------------------------------------
     */
 
@@ -341,18 +464,16 @@ if (
 
             /*
             |--------------------------------------------------------------------------
-            | Vérifier que la référence n'existe pas
+            | Vérifier une nouvelle fois si une référence existe
             |--------------------------------------------------------------------------
             */
 
-            $verification =
-                $pdo->prepare("
-                    SELECT
-                        id_paiement
-                    FROM paiements
-                    WHERE reference_transaction = ?
-                    LIMIT 1
-                ");
+            $verification = $pdo->prepare("
+                SELECT id_paiement
+                FROM paiements
+                WHERE reference_transaction = ?
+                LIMIT 1
+            ");
 
             $verification->execute([
                 $reference_transaction
@@ -371,12 +492,39 @@ if (
 
                 /*
                 |--------------------------------------------------------------------------
-                | Enregistrer le paiement
+                | Vérifier qu'aucun paiement n'a été enregistré
                 |--------------------------------------------------------------------------
                 */
 
-                $stmt =
-                    $pdo->prepare("
+                $verificationCommande = $pdo->prepare("
+                    SELECT id_paiement
+                    FROM paiements
+                    WHERE id_commande = ?
+                    LIMIT 1
+                ");
+
+                $verificationCommande->execute([
+                    $id_commande
+                ]);
+
+
+                if ($verificationCommande->fetch()) {
+
+                    $pdo->rollBack();
+
+                    $erreur =
+                        "Un paiement existe déjà pour cette commande.";
+
+                } else {
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | INSERTION DU PAIEMENT
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $stmt = $pdo->prepare("
                         INSERT INTO paiements
                         (
                             id_commande,
@@ -394,77 +542,83 @@ if (
                             ?,
                             ?,
                             ?,
-                            'orange_money',
                             ?,
-                            'en_attente',
+                            ?,
+                            ?,
                             NOW()
                         )
                     ");
 
 
-                $stmt->execute([
+                    $stmt->execute([
 
-                    $id_commande,
+                        $id_commande,
 
-                    $reference_commande,
+                        $reference_commande,
 
-                    $reference_transaction,
+                        $reference_transaction,
 
-                    $montant,
+                        $montant,
 
-                    $telephone_client
+                        'orange_money',
 
-                ]);
+                        $telephone_client,
+
+                        'en_attente'
+
+                    ]);
 
 
-                /*
-                |--------------------------------------------------------------------------
-                | Commande en attente de vérification
-                |--------------------------------------------------------------------------
-                */
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Mettre la commande en attente
+                    |--------------------------------------------------------------------------
+                    */
 
-                $updateCommande =
-                    $pdo->prepare("
+                    $updateCommande = $pdo->prepare("
                         UPDATE commandes
-                        SET statut = 'en_attente'
+                        SET statut = ?
                         WHERE id_commande = ?
                     ");
 
-                $updateCommande->execute([
-                    $id_commande
-                ]);
+                    $updateCommande->execute([
+                        'en_attente',
+                        $id_commande
+                    ]);
 
 
-                /*
-                |--------------------------------------------------------------------------
-                | Valider
-                |--------------------------------------------------------------------------
-                */
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Valider la transaction
+                    |--------------------------------------------------------------------------
+                    */
 
-                $pdo->commit();
-
-
-                /*
-                |--------------------------------------------------------------------------
-                | Succès
-                |--------------------------------------------------------------------------
-                */
-
-                $succes =
-                    "Votre paiement a bien été enregistré.";
+                    $pdo->commit();
 
 
-                /*
-                |--------------------------------------------------------------------------
-                | Récupérer le paiement nouvellement créé
-                |--------------------------------------------------------------------------
-                */
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Message de succès
+                    |--------------------------------------------------------------------------
+                    */
 
-                $stmtPaiement =
-                    $pdo->prepare("
+                    $succes =
+                        "Votre paiement a bien été enregistré.";
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Récupérer le paiement enregistré
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $stmtPaiement = $pdo->prepare("
                         SELECT
                             id_paiement,
                             reference_transaction,
+                            reference_commande,
+                            methode,
+                            telephone_client,
                             montant,
                             statut,
                             date_paiement
@@ -474,24 +628,39 @@ if (
                         LIMIT 1
                     ");
 
-                $stmtPaiement->execute([
-                    $id_commande
-                ]);
+                    $stmtPaiement->execute([
+                        $id_commande
+                    ]);
 
-                $paiement_existant =
-                    $stmtPaiement->fetch();
+                    $paiement_existant =
+                        $stmtPaiement->fetch();
+                }
             }
 
 
         } catch (PDOException $e) {
 
             if ($pdo->inTransaction()) {
+
                 $pdo->rollBack();
             }
 
+
+            /*
+            |--------------------------------------------------------------------------
+            | Message d'erreur
+            |--------------------------------------------------------------------------
+            */
+
             $erreur =
-                "Erreur lors de l'enregistrement du paiement : "
-                . $e->getMessage();
+                "Erreur lors de l'enregistrement du paiement.";
+
+            /*
+            | Pour le développement, tu peux temporairement utiliser :
+            |
+            | $erreur .= " " . $e->getMessage();
+            |
+            */
         }
     }
 }
@@ -511,9 +680,7 @@ if (
         content="width=device-width, initial-scale=1.0"
     >
 
-    <title>
-        Paiement Orange Money
-    </title>
+    <title>Paiement Orange Money</title>
 
 
     <style>
@@ -560,7 +727,7 @@ if (
 
             box-shadow:
                 0 10px 30px
-                rgba(0,0,0,.08);
+                rgba(0, 0, 0, .08);
         }
 
 
@@ -705,6 +872,8 @@ if (
             margin-bottom: 25px;
 
             font-weight: bold;
+
+            word-break: break-word;
         }
 
 
@@ -731,6 +900,18 @@ if (
             font-size: 16px;
 
             margin-bottom: 18px;
+
+            outline: none;
+        }
+
+
+        input:focus {
+
+            border-color: #ff7900;
+
+            box-shadow:
+                0 0 0 3px
+                rgba(255, 121, 0, .12);
         }
 
 
@@ -775,6 +956,8 @@ if (
             border-radius: 8px;
 
             margin-bottom: 20px;
+
+            line-height: 1.5;
         }
 
 
@@ -830,17 +1013,55 @@ if (
         }
 
 
+        .info-paiement {
+
+            background: #f3f4f6;
+
+            padding: 15px;
+
+            border-radius: 10px;
+
+            margin-top: 15px;
+        }
+
+
+        .statut {
+
+            display: inline-block;
+
+            padding: 6px 12px;
+
+            background: #fef3c7;
+
+            color: #92400e;
+
+            border-radius: 20px;
+
+            font-weight: bold;
+
+            margin-top: 5px;
+        }
+
+
         @media (max-width: 600px) {
 
             .container {
 
                 margin: 20px auto;
+
+                padding: 10px;
             }
 
 
             .card {
 
                 padding: 20px;
+            }
+
+
+            h1 {
+
+                font-size: 24px;
             }
 
 
@@ -875,6 +1096,10 @@ if (
         </h1>
 
 
+        <!-- =====================================================
+             COMMANDE
+        ====================================================== -->
+
         <div class="commande">
 
             Commande :
@@ -883,23 +1108,37 @@ if (
 
             <strong>
                 <?= htmlspecialchars(
-                    $numero_commande
+                    $numero_commande,
+                    ENT_QUOTES,
+                    'UTF-8'
                 ) ?>
             </strong>
 
         </div>
 
 
+        <!-- =====================================================
+             MESSAGE ERREUR
+        ====================================================== -->
+
         <?php if ($erreur): ?>
 
             <div class="erreur">
 
-                <?= htmlspecialchars($erreur) ?>
+                <?= htmlspecialchars(
+                    $erreur,
+                    ENT_QUOTES,
+                    'UTF-8'
+                ) ?>
 
             </div>
 
         <?php endif; ?>
 
+
+        <!-- =====================================================
+             MESSAGE SUCCÈS
+        ====================================================== -->
 
         <?php if ($succes): ?>
 
@@ -933,11 +1172,13 @@ if (
 
                 <br><br>
 
-                Votre paiement est maintenant
+                Votre paiement est maintenant :
 
-                <strong>
-                    en attente de vérification.
-                </strong>
+                <br>
+
+                <span class="statut">
+                    ⏳ En attente de vérification
+                </span>
 
                 <br><br>
 
@@ -946,13 +1187,19 @@ if (
                 <strong>
 
                     <?= htmlspecialchars(
-                        $reference_transaction
+                        $reference_transaction,
+                        ENT_QUOTES,
+                        'UTF-8'
                     ) ?>
 
                 </strong>
 
             </div>
 
+
+        <!-- =====================================================
+             PAIEMENT EXISTANT
+        ====================================================== -->
 
         <?php elseif ($paiement_existant): ?>
 
@@ -974,7 +1221,7 @@ if (
                 <strong>
 
                     <?= number_format(
-                        $paiement_existant['montant'],
+                        (float) $paiement_existant['montant'],
                         0,
                         ',',
                         ' '
@@ -988,31 +1235,69 @@ if (
 
                 Statut :
 
-                <strong>
+                <br>
+
+                <span class="statut">
+
                     <?= htmlspecialchars(
-                        $paiement_existant['statut']
+                        $paiement_existant['statut'],
+                        ENT_QUOTES,
+                        'UTF-8'
                     ) ?>
-                </strong>
+
+                </span>
 
                 <br><br>
 
-                Référence :
+                Référence de transaction :
 
                 <strong>
 
                     <?= htmlspecialchars(
                         $paiement_existant[
                             'reference_transaction'
-                        ]
+                        ],
+                        ENT_QUOTES,
+                        'UTF-8'
                     ) ?>
 
                 </strong>
 
+                <?php if (
+                    !empty(
+                        $paiement_existant['telephone_client']
+                    )
+                ): ?>
+
+                    <br><br>
+
+                    Numéro Orange Money :
+
+                    <strong>
+
+                        <?= htmlspecialchars(
+                            $paiement_existant[
+                                'telephone_client'
+                            ],
+                            ENT_QUOTES,
+                            'UTF-8'
+                        ) ?>
+
+                    </strong>
+
+                <?php endif; ?>
+
             </div>
 
 
+        <!-- =====================================================
+             FORMULAIRE DE PAIEMENT
+        ====================================================== -->
+
         <?php else: ?>
 
+
+            <!-- NUMÉRO ORANGE MONEY -->
 
             <div class="orange-box">
 
@@ -1026,13 +1311,17 @@ if (
                 <div class="numero">
 
                     <?= htmlspecialchars(
-                        $numero_orange
+                        $numero_orange,
+                        ENT_QUOTES,
+                        'UTF-8'
                     ) ?>
 
                 </div>
 
             </div>
 
+
+            <!-- MONTANT -->
 
             <div class="montant">
 
@@ -1059,10 +1348,12 @@ if (
             </div>
 
 
+            <!-- INSTRUCTIONS -->
+
             <div class="instructions">
 
                 <h2>
-                    Comment payer ?
+                    📱 Comment payer ?
                 </h2>
 
 
@@ -1095,7 +1386,9 @@ if (
                         <strong>
 
                             <?= htmlspecialchars(
-                                $numero_orange
+                                $numero_orange,
+                                ENT_QUOTES,
+                                'UTF-8'
                             ) ?>
 
                         </strong>
@@ -1125,6 +1418,8 @@ if (
             </div>
 
 
+            <!-- RÉFÉRENCE COMMANDE -->
+
             <div class="reference">
 
                 Référence de commande :
@@ -1132,11 +1427,15 @@ if (
                 <br><br>
 
                 <?= htmlspecialchars(
-                    $reference_commande
+                    $reference_commande,
+                    ENT_QUOTES,
+                    'UTF-8'
                 ) ?>
 
             </div>
 
+
+            <!-- FORMULAIRE -->
 
             <form method="POST">
 
@@ -1144,13 +1443,13 @@ if (
                 <input
                     type="hidden"
                     name="id_commande"
-                    value="<?= $id_commande ?>"
+                    value="<?= (int) $id_commande ?>"
                 >
 
 
                 <label for="telephone_client">
 
-                    Votre numéro Orange Money
+                    📱 Votre numéro Orange Money
 
                 </label>
 
@@ -1161,13 +1460,14 @@ if (
                     name="telephone_client"
                     placeholder="+224 6XXXXXXXX"
                     maxlength="20"
+                    autocomplete="tel"
                     required
                 >
 
 
                 <label for="reference_transaction">
 
-                    Référence de la transaction
+                    🔢 Référence de la transaction
 
                 </label>
 
@@ -1191,6 +1491,8 @@ if (
             </form>
 
 
+            <!-- AVERTISSEMENT -->
+
             <div class="warning">
 
                 <strong>
@@ -1201,6 +1503,11 @@ if (
 
                 Votre paiement sera vérifié avant que
                 la commande soit définitivement validée.
+
+                <br><br>
+
+                Ne communiquez jamais votre code secret
+                Orange Money.
 
             </div>
 
@@ -1216,3 +1523,4 @@ if (
 </body>
 
 </html>
+
