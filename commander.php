@@ -1294,7 +1294,7 @@ body{
 
 <div class="checkout-header">
 
-```
+
 <h1>
     Finaliser ma commande
 </h1>
@@ -1303,7 +1303,7 @@ body{
     Renseignez vos informations de livraison
     pour continuer vers le paiement.
 </p>
-```
+
 
 </div>
 
@@ -1313,7 +1313,7 @@ body{
 
 <div class="steps">
 
-```
+
 <div class="step active">
 
     <span class="step-number">
@@ -1357,7 +1357,7 @@ body{
     </span>
 
 </div>
-```
+
 
 </div>
 
@@ -1367,7 +1367,7 @@ body{
 
 <?php if (!empty($erreurs)): ?>
 
-```
+
 <div class="erreurs">
 
     <div class="erreurs-title">
@@ -1391,7 +1391,7 @@ body{
     </ul>
 
 </div>
-```
+
 
 <?php endif; ?>
 
@@ -1401,7 +1401,6 @@ body{
 
 <div class="checkout-grid">
 
-```
 <!-- =================================================
      INFORMATIONS CLIENT
 ================================================== -->
@@ -1872,7 +1871,7 @@ body{
 
 
 </div>
-```
+
 
 </div>
 
