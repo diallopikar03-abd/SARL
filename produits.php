@@ -955,7 +955,7 @@ footer {
                             href="produit.php?id_boisson=<?= (int)$p['id_boisson'] ?>"
                         >
 
-                            Voir le produit →
+                            Voir le Panier →
 
                         </a>
 

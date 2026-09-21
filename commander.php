@@ -7,101 +7,78 @@ require 'db.php';
 header('Content-Type: text/html; charset=utf-8');
 
 
-// =====================================================
-// 1. VÉRIFIER LE PANIER
-// =====================================================
+/*
+|--------------------------------------------------------------------------
+| CONFIGURATION PDO
+|--------------------------------------------------------------------------
+*/
 
-if (empty($_SESSION['panier'])) {
-    header("Location: panier.php");
-    exit();
-}
+try {
 
-$panier = $_SESSION['panier'];
-
-$produits = [];
-
-$total_general = 0;
-
-
-// =====================================================
-// 2. RÉCUPÉRER LES PRODUITS DU PANIER
-// =====================================================
-
-foreach ($panier as $id_boisson => $quantite) {
-
-    $id_boisson = (int)$id_boisson;
-    $quantite = (int)$quantite;
-
-    if ($quantite <= 0) {
-        continue;
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        throw new Exception(
+            "La connexion à la base de données est indisponible."
+        );
     }
 
-    $stmt = $pdo->prepare("
-        SELECT
-            id_boisson,
-            nom,
-            prix,
-            image,
-            stock
-        FROM boissons
-        WHERE id_boisson = ?
-        LIMIT 1
-    ");
+    $pdo->setAttribute(
+        PDO::ATTR_ERRMODE,
+        PDO::ERRMODE_EXCEPTION
+    );
 
-    $stmt->execute([$id_boisson]);
+    $pdo->setAttribute(
+        PDO::ATTR_DEFAULT_FETCH_MODE,
+        PDO::FETCH_ASSOC
+    );
 
-    $boisson = $stmt->fetch(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
 
-    if ($boisson) {
-
-        // Vérifier le stock
-        if ($quantite > (int)$boisson['stock']) {
-
-            $quantite = (int)$boisson['stock'];
-
-            $_SESSION['panier'][$id_boisson] = $quantite;
-        }
-
-        if ($quantite <= 0) {
-
-            unset($_SESSION['panier'][$id_boisson]);
-
-            continue;
-        }
-
-        $boisson['quantite'] = $quantite;
-
-        $boisson['sous_total'] =
-            (float)$boisson['prix'] * $quantite;
-
-        $total_general +=
-            $boisson['sous_total'];
-
-        $produits[] = $boisson;
-    }
+    die(
+        '<div style="
+            max-width:700px;
+            margin:50px auto;
+            padding:20px;
+            background:#fee2e2;
+            color:#991b1b;
+            border-radius:10px;
+            font-family:Arial,sans-serif;
+        ">
+            <h3>Erreur de connexion</h3>
+            <p>' .
+            htmlspecialchars(
+                $e->getMessage(),
+                ENT_QUOTES,
+                'UTF-8'
+            ) .
+            '</p>
+        </div>'
+    );
 }
 
 
-// =====================================================
-// 3. VÉRIFIER LE PANIER
-// =====================================================
+/*
+|--------------------------------------------------------------------------
+| 1. VÉRIFIER LE PANIER
+|--------------------------------------------------------------------------
+*/
 
 if (
-    empty($produits) ||
-    $total_general <= 0
+    !isset($_SESSION['panier']) ||
+    empty($_SESSION['panier'])
 ) {
 
-    $_SESSION['panier'] = [];
-
-    header("Location: panier.php");
-
-    exit();
+    header('Location: produits.php');
+    exit;
 }
 
 
-// =====================================================
-// 4. VARIABLES CLIENT
-// =====================================================
+/*
+|--------------------------------------------------------------------------
+| VARIABLES
+|--------------------------------------------------------------------------
+*/
+
+$erreurs = [];
 
 $nom = '';
 $prenom = '';
@@ -109,286 +86,602 @@ $telephone = '';
 $email = '';
 $adresse = '';
 
-$erreurs = [];
+$produits_panier = [];
+$montant_total = 0;
 
 
-// =====================================================
-// 5. TRAITEMENT DU FORMULAIRE
-// =====================================================
+/*
+|--------------------------------------------------------------------------
+| 2. RÉCUPÉRER LES PRODUITS DU PANIER
+|--------------------------------------------------------------------------
+*/
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+try {
 
-    $nom =
-        trim($_POST['nom'] ?? '');
+    foreach ($_SESSION['panier'] as $id_boisson => $quantite) {
 
-    $prenom =
-        trim($_POST['prenom'] ?? '');
+        $id_boisson = (int) $id_boisson;
+        $quantite = (int) $quantite;
 
-    $telephone =
-        trim($_POST['telephone'] ?? '');
+        if (
+            $id_boisson <= 0 ||
+            $quantite <= 0
+        ) {
+            continue;
+        }
 
-    $email =
-        trim($_POST['email'] ?? '');
 
-    $adresse =
-        trim($_POST['adresse'] ?? '');
+        $stmt = $pdo->prepare("
+            SELECT
+                id_boisson,
+                nom,
+                prix,
+                stock,
+                image
+            FROM boissons
+            WHERE id_boisson = :id_boisson
+            LIMIT 1
+        ");
 
+        $stmt->execute([
+            ':id_boisson' => $id_boisson
+        ]);
 
-    // -------------------------------------------------
-    // Validation
-    // -------------------------------------------------
+        $produit = $stmt->fetch();
 
-    if ($prenom === '') {
 
-        $erreurs[] =
-            "Veuillez saisir votre prénom.";
-    }
+        /*
+        | Produit inexistant
+        */
 
-    if ($nom === '') {
-
-        $erreurs[] =
-            "Veuillez saisir votre nom.";
-    }
-
-    if ($telephone === '') {
-
-        $erreurs[] =
-            "Veuillez saisir votre numéro de téléphone.";
-    }
-
-    if ($adresse === '') {
-
-        $erreurs[] =
-            "Veuillez saisir votre adresse de livraison.";
-    }
-
-    if (
-        $email !== '' &&
-        !filter_var(
-            $email,
-            FILTER_VALIDATE_EMAIL
-        )
-    ) {
-
-        $erreurs[] =
-            "L'adresse email est invalide.";
-    }
-
-
-    // =================================================
-    // 6. CRÉER LA COMMANDE
-    // =================================================
-
-    if (empty($erreurs)) {
-
-        try {
-
-            $pdo->beginTransaction();
-
-
-            // -----------------------------------------
-            // Numéro de commande unique
-            // -----------------------------------------
-
-            do {
-
-                $numero_commande =
-                    'CMD-' .
-                    date('YmdHis') .
-                    '-' .
-                    random_int(1000, 9999);
-
-
-                $check = $pdo->prepare("
-                    SELECT id_commande
-                    FROM commandes
-                    WHERE numero_commande = ?
-                    LIMIT 1
-                ");
-
-                $check->execute([
-                    $numero_commande
-                ]);
-
-            } while ($check->fetch());
-
-
-            // -----------------------------------------
-            // Client connecté ou invité
-            // -----------------------------------------
-
-            $id_utilisateur = null;
-
-            if (
-                isset($_SESSION['user_id']) &&
-                $_SESSION['user_id'] !== ''
-            ) {
-
-                $id_utilisateur =
-                    (int)$_SESSION['user_id'];
-            }
-
-
-            // -----------------------------------------
-            // Insérer la commande
-            // -----------------------------------------
-
-            /*
-             * IMPORTANT :
-             * La colonne statut doit accepter :
-             *
-             * en_attente
-             * payee
-             * preparee
-             * expediee
-             * livree
-             * annulee
-             */
-
-            $stmt = $pdo->prepare("
-                INSERT INTO commandes
-                (
-                    id_utilisateur,
-                    numero_commande,
-                    montant_total,
-                    statut,
-                    date_commande,
-                    nom_client,
-                    prenom_client,
-                    telephone,
-                    email,
-                    adresse_livraison
-                )
-                VALUES
-                (
-                    :id_utilisateur,
-                    :numero_commande,
-                    :montant_total,
-                    :statut,
-                    NOW(),
-                    :nom_client,
-                    :prenom_client,
-                    :telephone,
-                    :email,
-                    :adresse_livraison
-                )
-            ");
-
-
-            $stmt->execute([
-
-                ':id_utilisateur' =>
-                    $id_utilisateur,
-
-                ':numero_commande' =>
-                    $numero_commande,
-
-                ':montant_total' =>
-                    $total_general,
-
-                ':statut' =>
-                    'en_attente',
-
-                ':nom_client' =>
-                    $nom,
-
-                ':prenom_client' =>
-                    $prenom,
-
-                ':telephone' =>
-                    $telephone,
-
-                ':email' =>
-                    $email !== ''
-                        ? $email
-                        : null,
-
-                ':adresse_livraison' =>
-                    $adresse
-            ]);
-
-
-            // -----------------------------------------
-            // ID commande
-            // -----------------------------------------
-
-            $id_commande =
-                (int)$pdo->lastInsertId();
-
-
-            if ($id_commande <= 0) {
-
-                throw new Exception(
-                    "Impossible de récupérer l'identifiant de la commande."
-                );
-            }
-
-
-            // -----------------------------------------
-            // Valider
-            // -----------------------------------------
-
-            $pdo->commit();
-
-
-            // -----------------------------------------
-            // Mémoriser la commande
-            // -----------------------------------------
-
-            $_SESSION['id_commande'] =
-                $id_commande;
-
-            $_SESSION['numero_commande'] =
-                $numero_commande;
-
-
-            // -----------------------------------------
-            // Vider le panier
-            // -----------------------------------------
-
-            $_SESSION['panier'] = [];
-
-
-            // -----------------------------------------
-            // Aller au paiement
-            // -----------------------------------------
-
-            header(
-                "Location: payer.php?id_commande=" .
-                $id_commande
-            );
-
-            exit();
-
-
-        } catch (Throwable $e) {
-
-            if ($pdo->inTransaction()) {
-
-                $pdo->rollBack();
-            }
+        if (!$produit) {
 
             $erreurs[] =
-                "Erreur lors de l'enregistrement de la commande : " .
-                $e->getMessage();
+                "Le produit numéro " .
+                $id_boisson .
+                " n'existe plus.";
+
+            continue;
+        }
+
+
+        /*
+        | Vérification du stock
+        */
+
+        if (
+            (int) $produit['stock'] <
+            $quantite
+        ) {
+
+            $erreurs[] =
+                "Le produit « " .
+                $produit['nom'] .
+                " » ne possède pas suffisamment de stock.";
+
+            continue;
+        }
+
+
+        /*
+        | Calcul du sous-total
+        */
+
+        $prix = (float) $produit['prix'];
+
+        $sous_total =
+            $prix * $quantite;
+
+        $produit['quantite'] =
+            $quantite;
+
+        $produit['sous_total'] =
+            $sous_total;
+
+        $produits_panier[] =
+            $produit;
+
+        $montant_total +=
+            $sous_total;
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | PANIER INVALIDE
+    |--------------------------------------------------------------------------
+    */
+
+    if (empty($produits_panier)) {
+
+        $erreurs[] =
+            "Votre panier ne contient aucun produit valide.";
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | 3. TRAITEMENT DU FORMULAIRE
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+        $_SERVER['REQUEST_METHOD'] === 'POST'
+    ) {
+
+        /*
+        | Récupération des informations client
+        */
+
+        $nom =
+            trim($_POST['nom'] ?? '');
+
+        $prenom =
+            trim($_POST['prenom'] ?? '');
+
+        $telephone =
+            trim($_POST['telephone'] ?? '');
+
+        $email =
+            trim($_POST['email'] ?? '');
+
+        $adresse =
+            trim($_POST['adresse'] ?? '');
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | VALIDATION DU NOM
+        |--------------------------------------------------------------------------
+        */
+
+        if ($nom === '') {
+
+            $erreurs[] =
+                "Le nom est obligatoire.";
+
+        } elseif (
+            mb_strlen($nom) > 100
+        ) {
+
+            $erreurs[] =
+                "Le nom ne doit pas dépasser 100 caractères.";
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | VALIDATION DU PRÉNOM
+        |--------------------------------------------------------------------------
+        */
+
+        if ($prenom === '') {
+
+            $erreurs[] =
+                "Le prénom est obligatoire.";
+
+        } elseif (
+            mb_strlen($prenom) > 100
+        ) {
+
+            $erreurs[] =
+                "Le prénom ne doit pas dépasser 100 caractères.";
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | VALIDATION DU TÉLÉPHONE
+        |--------------------------------------------------------------------------
+        */
+
+        if ($telephone === '') {
+
+            $erreurs[] =
+                "Le numéro de téléphone est obligatoire.";
+
+        } elseif (
+            mb_strlen($telephone) < 6
+        ) {
+
+            $erreurs[] =
+                "Le numéro de téléphone est trop court.";
+
+        } elseif (
+            mb_strlen($telephone) > 30
+        ) {
+
+            $erreurs[] =
+                "Le numéro de téléphone ne doit pas dépasser 30 caractères.";
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | VALIDATION EMAIL
+        |--------------------------------------------------------------------------
+        */
+
+        if ($email === '') {
+
+            $erreurs[] =
+                "L'adresse email est obligatoire.";
+
+        } elseif (
+            !filter_var(
+                $email,
+                FILTER_VALIDATE_EMAIL
+            )
+        ) {
+
+            $erreurs[] =
+                "Veuillez saisir une adresse email valide.";
+
+        } elseif (
+            mb_strlen($email) > 150
+        ) {
+
+            $erreurs[] =
+                "L'adresse email ne doit pas dépasser 150 caractères.";
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | VALIDATION ADRESSE
+        |--------------------------------------------------------------------------
+        */
+
+        if ($adresse === '') {
+
+            $erreurs[] =
+                "L'adresse de livraison est obligatoire.";
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | 4. ENREGISTRER LA COMMANDE
+        |--------------------------------------------------------------------------
+        */
+
+        if (empty($erreurs)) {
+
+            try {
+
+                /*
+                | Début transaction
+                */
+
+                $pdo->beginTransaction();
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | 5. GÉNÉRER UN NUMÉRO DE COMMANDE UNIQUE
+                |--------------------------------------------------------------------------
+                */
+
+                do {
+
+                    $numero_commande =
+                        'CMD-' .
+                        date('YmdHis') .
+                        '-' .
+                        strtoupper(
+                            bin2hex(
+                                random_bytes(3)
+                            )
+                        );
+
+
+                    $verification =
+                        $pdo->prepare("
+                            SELECT id_commande
+                            FROM commandes
+                            WHERE numero_commande = :numero_commande
+                            LIMIT 1
+                        ");
+
+                    $verification->execute([
+                        ':numero_commande' =>
+                            $numero_commande
+                    ]);
+
+                    $numero_existe =
+                        $verification->fetch();
+
+                } while ($numero_existe);
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | 6. INSERTION DE LA COMMANDE
+                |
+                | IMPORTANT :
+                | statut n'est pas envoyé.
+                | MySQL utilise automatiquement sa valeur par défaut.
+                |
+                | id_utilisateur n'est pas envoyé car
+                | le client peut commander sans compte.
+                |--------------------------------------------------------------------------
+                */
+
+                $sql = "
+                    INSERT INTO commandes
+                    (
+                        numero_commande,
+                        montant_total,
+                        nom_client,
+                        prenom_client,
+                        telephone,
+                        email,
+                        adresse_livraison
+                    )
+                    VALUES
+                    (
+                        :numero_commande,
+                        :montant_total,
+                        :nom_client,
+                        :prenom_client,
+                        :telephone,
+                        :email,
+                        :adresse_livraison
+                    )
+                ";
+
+
+                $stmt =
+                    $pdo->prepare($sql);
+
+
+                $stmt->execute([
+
+                    ':numero_commande' =>
+                        $numero_commande,
+
+                    ':montant_total' =>
+                        number_format(
+                            $montant_total,
+                            2,
+                            '.',
+                            ''
+                        ),
+
+                    ':nom_client' =>
+                        $nom,
+
+                    ':prenom_client' =>
+                        $prenom,
+
+                    ':telephone' =>
+                        $telephone,
+
+                    ':email' =>
+                        $email,
+
+                    ':adresse_livraison' =>
+                        $adresse
+                ]);
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | 7. RÉCUPÉRER L'ID
+                |--------------------------------------------------------------------------
+                */
+
+                $id_commande =
+                    (int) $pdo->lastInsertId();
+
+
+                if (
+                    $id_commande <= 0
+                ) {
+
+                    throw new Exception(
+                        "Impossible de récupérer l'identifiant de la commande."
+                    );
+                }
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | 8. VÉRIFIER QUE LA COMMANDE EXISTE
+                |--------------------------------------------------------------------------
+                */
+
+                $verification_commande =
+                    $pdo->prepare("
+                        SELECT
+                            id_commande,
+                            numero_commande,
+                            montant_total,
+                            statut
+                        FROM commandes
+                        WHERE id_commande = :id_commande
+                        LIMIT 1
+                    ");
+
+
+                $verification_commande->execute([
+                    ':id_commande' =>
+                        $id_commande
+                ]);
+
+
+                $commande =
+                    $verification_commande->fetch();
+
+
+                if (!$commande) {
+
+                    throw new Exception(
+                        "La commande n'a pas pu être retrouvée après son enregistrement."
+                    );
+                }
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | 9. VÉRIFIER ET DIMINUER LE STOCK
+                |--------------------------------------------------------------------------
+                */
+
+                foreach (
+                    $produits_panier
+                    as $produit
+                ) {
+
+                    $id_boisson =
+                        (int) $produit['id_boisson'];
+
+                    $quantite =
+                        (int) $produit['quantite'];
+
+
+                    /*
+                    | Verrouillage du produit
+                    */
+
+                    $stock_stmt =
+                        $pdo->prepare("
+                            SELECT stock
+                            FROM boissons
+                            WHERE id_boisson = :id_boisson
+                            FOR UPDATE
+                        ");
+
+
+                    $stock_stmt->execute([
+                        ':id_boisson' =>
+                            $id_boisson
+                    ]);
+
+
+                    $stock_actuel =
+                        $stock_stmt->fetchColumn();
+
+
+                    if (
+                        $stock_actuel === false
+                    ) {
+
+                        throw new Exception(
+                            "Le produit « " .
+                            $produit['nom'] .
+                            " » n'existe plus."
+                        );
+                    }
+
+
+                    /*
+                    | Vérification finale
+                    */
+
+                    if (
+                        (int) $stock_actuel <
+                        $quantite
+                    ) {
+
+                        throw new Exception(
+                            "Le stock du produit « " .
+                            $produit['nom'] .
+                            " » est insuffisant."
+                        );
+                    }
+
+
+                    /*
+                    | Diminution du stock
+                    */
+
+                    $update_stock =
+                        $pdo->prepare("
+                            UPDATE boissons
+                            SET stock = stock - :quantite
+                            WHERE id_boisson = :id_boisson
+                        ");
+
+
+                    $update_stock->execute([
+
+                        ':quantite' =>
+                            $quantite,
+
+                        ':id_boisson' =>
+                            $id_boisson
+                    ]);
+                }
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | 10. VALIDER LA TRANSACTION
+                |--------------------------------------------------------------------------
+                */
+
+                $pdo->commit();
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | 11. ENREGISTRER LA COMMANDE EN SESSION
+                |--------------------------------------------------------------------------
+                */
+
+                $_SESSION['id_commande'] =
+                    $id_commande;
+
+                $_SESSION['numero_commande'] =
+                    $numero_commande;
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | 12. VIDER LE PANIER
+                |--------------------------------------------------------------------------
+                */
+
+                $_SESSION['panier'] = [];
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | 13. REDIRECTION VERS PAIEMENT
+                |--------------------------------------------------------------------------
+                */
+
+                header(
+                    'Location: payer.php?id_commande=' .
+                    $id_commande
+                );
+
+                exit;
+
+
+            } catch (Throwable $e) {
+
+                if (
+                    $pdo->inTransaction()
+                ) {
+
+                    $pdo->rollBack();
+                }
+
+
+                $erreurs[] =
+                    "Erreur lors de l'enregistrement de la commande : " .
+                    $e->getMessage();
+            }
         }
     }
-}
 
+} catch (Throwable $e) {
 
-include 'header.php';
-
-
-// =====================================================
-// NOMBRE D'ARTICLES
-// =====================================================
-
-$nombre_articles = 0;
-
-foreach ($produits as $produit) {
-
-    $nombre_articles +=
-        (int)$produit['quantite'];
+    $erreurs[] =
+        "Une erreur est survenue : " .
+        $e->getMessage();
 }
 
 ?>
@@ -399,1484 +692,1377 @@ foreach ($produits as $produit) {
 
 <head>
 
-<meta charset="UTF-8">
+    <meta charset="UTF-8">
 
-<meta
-name="viewport"
-content="width=device-width, initial-scale=1.0"
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
 
->
+    <title>
+        Finaliser la commande - DrinkShop
+    </title>
 
-<title>
-    Finaliser ma commande - DrinkShop
-</title>
 
-<style>
+    <style>
 
-/* =====================================================
-   RESET
-===================================================== */
+        * {
+            box-sizing: border-box;
+        }
 
-*{
-    margin:0;
-    padding:0;
-    box-sizing:border-box;
-}
 
+        body {
 
-/* =====================================================
-   BODY
-===================================================== */
+            margin: 0;
 
-body{
+            font-family:
+                Inter,
+                Arial,
+                Helvetica,
+                sans-serif;
 
-    font-family:
-        Inter,
-        Arial,
-        Helvetica,
-        sans-serif;
+            background:
+                #f6f7fb;
 
-    background:#f5f7fb;
+            color:
+                #111827;
+        }
 
-    color:#1f2937;
 
-    min-height:100vh;
-}
+        /* =====================================================
+           HEADER
+        ===================================================== */
 
+        .top-header {
 
-/* =====================================================
-   CONTENEUR
-===================================================== */
+            background:
+                #ffffff;
 
-.checkout-container{
+            border-bottom:
+                1px solid #e5e7eb;
 
-    max-width:1200px;
+            height:
+                72px;
 
-    margin:0 auto;
+            display:
+                flex;
 
-    padding:45px 20px 70px;
-}
+            align-items:
+                center;
 
+            justify-content:
+                space-between;
 
-/* =====================================================
-   HEADER PAGE
-===================================================== */
+            padding:
+                0 5%;
 
-.checkout-header{
+            position:
+                sticky;
 
-    margin-bottom:30px;
-}
+            top:
+                0;
 
+            z-index:
+                100;
+        }
 
-.checkout-header h1{
 
-    font-size:34px;
+        .logo {
 
-    color:#111827;
+            font-size:
+                24px;
 
-    font-weight:800;
+            font-weight:
+                800;
 
-    margin-bottom:8px;
-}
+            color:
+                #111827;
+        }
 
 
-.checkout-header p{
+        .logo span {
 
-    color:#6b7280;
+            color:
+                #f97316;
+        }
 
-    font-size:15px;
 
-    line-height:1.6;
-}
+        .secure {
 
+            color:
+                #6b7280;
 
-/* =====================================================
-   ÉTAPES
-===================================================== */
+            font-size:
+                14px;
 
-.steps{
+            display:
+                flex;
 
-    display:flex;
+            align-items:
+                center;
 
-    align-items:center;
+            gap:
+                7px;
+        }
 
-    margin-bottom:30px;
 
-    max-width:700px;
-}
+        /* =====================================================
+           CONTENEUR
+        ===================================================== */
 
+        .container {
 
-.step{
+            width:
+                92%;
 
-    display:flex;
+            max-width:
+                1180px;
 
-    align-items:center;
+            margin:
+                45px auto;
+        }
 
-    gap:9px;
 
-    color:#9ca3af;
+        .page-heading {
 
-    font-size:13px;
+            margin-bottom:
+                30px;
+        }
 
-    font-weight:700;
 
-    white-space:nowrap;
-}
+        .page-heading h1 {
 
+            margin:
+                0 0 8px;
 
-.step-number{
+            font-size:
+                32px;
 
-    width:32px;
+            font-weight:
+                800;
 
-    height:32px;
+            color:
+                #111827;
+        }
 
-    border-radius:50%;
 
-    display:flex;
+        .page-heading p {
 
-    justify-content:center;
+            margin:
+                0;
 
-    align-items:center;
+            color:
+                #6b7280;
 
-    background:#e5e7eb;
+            font-size:
+                15px;
+        }
 
-    color:#6b7280;
 
-    font-weight:800;
-}
+        /* =====================================================
+           ERREURS
+        ===================================================== */
 
+        .erreurs {
 
-.step.active{
+            background:
+                #fff1f2;
 
-    color:#2563eb;
-}
+            border:
+                1px solid #fecdd3;
 
+            color:
+                #9f1239;
 
-.step.active .step-number{
+            border-radius:
+                12px;
 
-    background:#2563eb;
+            padding:
+                18px 20px;
 
-    color:#ffffff;
+            margin-bottom:
+                25px;
+        }
 
-    box-shadow:
-        0 5px 15px rgba(37,99,235,.25);
-}
 
+        .erreurs strong {
 
-.step-line{
+            display:
+                block;
 
-    flex:1;
+            margin-bottom:
+                8px;
+        }
 
-    height:2px;
 
-    background:#e5e7eb;
+        .erreurs ul {
 
-    margin:0 12px;
-}
+            margin:
+                0;
 
+            padding-left:
+                20px;
+        }
 
-/* =====================================================
-   GRID PRINCIPAL
-===================================================== */
 
-.checkout-grid{
+        .erreurs li {
 
-    display:grid;
+            margin-bottom:
+                5px;
+        }
 
-    grid-template-columns:
-        minmax(0,1fr)
-        380px;
 
-    gap:25px;
+        /* =====================================================
+           LAYOUT
+        ===================================================== */
 
-    align-items:start;
-}
+        .checkout {
 
+            display:
+                grid;
 
-/* =====================================================
-   CARTES
-===================================================== */
+            grid-template-columns:
+                minmax(0, 1fr) 410px;
 
-.checkout-card{
+            gap:
+                28px;
 
-    background:#ffffff;
+            align-items:
+                start;
+        }
 
-    border:1px solid #e8ebf0;
 
-    border-radius:20px;
+        .card {
 
-    padding:30px;
+            background:
+                #ffffff;
 
-    box-shadow:
-        0 8px 30px rgba(15,23,42,.05);
-}
+            border:
+                1px solid #e5e7eb;
 
+            border-radius:
+                16px;
 
-/* =====================================================
-   TITRE CARTE
-===================================================== */
+            box-shadow:
+                0 8px 30px rgba(
+                    15,
+                    23,
+                    42,
+                    0.06
+                );
 
-.card-title{
+            overflow:
+                hidden;
+        }
 
-    display:flex;
 
-    align-items:center;
+        .card-header {
 
-    gap:12px;
+            padding:
+                24px 26px;
 
-    margin-bottom:25px;
-}
+            border-bottom:
+                1px solid #eef0f3;
+        }
 
 
-.card-title-icon{
+        .card-header h2 {
 
-    width:40px;
+            margin:
+                0 0 5px;
 
-    height:40px;
+            font-size:
+                20px;
+        }
 
-    display:flex;
 
-    justify-content:center;
+        .card-header p {
 
-    align-items:center;
+            margin:
+                0;
 
-    background:#eff6ff;
+            color:
+                #6b7280;
 
-    border-radius:10px;
+            font-size:
+                13px;
+        }
 
-    font-size:20px;
-}
 
+        .card-body {
 
-.card-title h2{
+            padding:
+                26px;
+        }
 
-    font-size:21px;
 
-    color:#111827;
+        /* =====================================================
+           FORMULAIRE
+        ===================================================== */
 
-    font-weight:800;
-}
+        .form-grid {
 
+            display:
+                grid;
 
-.card-title p{
+            grid-template-columns:
+                1fr 1fr;
 
-    color:#9ca3af;
+            gap:
+                18px;
+        }
 
-    font-size:12px;
 
-    margin-top:3px;
-}
+        .form-group {
 
+            margin-bottom:
+                18px;
+        }
 
-/* =====================================================
-   FORMULAIRE
-===================================================== */
 
-.form-row{
+        .form-group.full {
 
-    display:grid;
+            grid-column:
+                1 / -1;
+        }
 
-    grid-template-columns:1fr 1fr;
 
-    gap:15px;
-}
+        label {
 
+            display:
+                block;
 
-.form-group{
+            margin-bottom:
+                8px;
 
-    margin-bottom:18px;
-}
+            font-size:
+                14px;
 
+            font-weight:
+                700;
 
-.form-group label{
+            color:
+                #374151;
+        }
 
-    display:block;
 
-    font-size:13px;
+        .required {
 
-    font-weight:700;
+            color:
+                #ef4444;
+        }
 
-    color:#374151;
 
-    margin-bottom:8px;
-}
+        input,
+        textarea {
 
+            width:
+                100%;
 
-.required{
+            border:
+                1px solid #d1d5db;
 
-    color:#dc2626;
-}
+            border-radius:
+                9px;
 
+            padding:
+                13px 14px;
 
-.input-wrapper{
+            font-size:
+                15px;
 
-    position:relative;
-}
+            font-family:
+                inherit;
 
+            color:
+                #111827;
 
-.input-icon{
+            background:
+                #ffffff;
 
-    position:absolute;
+            outline:
+                none;
 
-    left:14px;
+            transition:
+                0.2s;
+        }
 
-    top:50%;
 
-    transform:translateY(-50%);
+        input {
 
-    font-size:16px;
+            height:
+                48px;
+        }
 
-    color:#9ca3af;
 
-    pointer-events:none;
-}
+        textarea {
 
+            min-height:
+                115px;
 
-.form-group input,
-.form-group textarea{
+            resize:
+                vertical;
+        }
 
-    width:100%;
 
-    padding:13px 14px 13px 42px;
+        input:focus,
+        textarea:focus {
 
-    border:1px solid #dfe3e8;
+            border-color:
+                #f97316;
 
-    border-radius:10px;
+            box-shadow:
+                0 0 0 3px
+                rgba(
+                    249,
+                    115,
+                    22,
+                    0.10
+                );
+        }
 
-    background:#ffffff;
 
-    color:#111827;
+        /* =====================================================
+           BOUTON
+        ===================================================== */
 
-    font-family:inherit;
+        .btn {
 
-    font-size:14px;
+            width:
+                100%;
 
-    outline:none;
+            height:
+                52px;
 
-    transition:
-        border-color .2s,
-        box-shadow .2s;
-}
+            border:
+                none;
 
+            border-radius:
+                10px;
 
-.form-group textarea{
+            background:
+                #f97316;
 
-    min-height:115px;
+            color:
+                #ffffff;
 
-    resize:vertical;
+            font-size:
+                15px;
 
-    line-height:1.5;
+            font-weight:
+                700;
 
-    padding-left:14px;
-}
+            cursor:
+                pointer;
 
+            transition:
+                0.2s;
 
-.form-group input:focus,
-.form-group textarea:focus{
+            margin-top:
+                5px;
+        }
 
-    border-color:#2563eb;
 
-    box-shadow:
-        0 0 0 3px rgba(37,99,235,.10);
-}
+        .btn:hover {
 
+            background:
+                #ea580c;
 
-.form-group input::placeholder,
-.form-group textarea::placeholder{
+            transform:
+                translateY(-1px);
+        }
 
-    color:#b0b5bd;
-}
 
+        /* =====================================================
+           RÉSUMÉ PANIER
+        ===================================================== */
 
-/* =====================================================
-   MESSAGE ERREUR
-===================================================== */
+        .summary-card {
 
-.erreurs{
+            position:
+                sticky;
 
-    background:#fef2f2;
+            top:
+                95px;
+        }
 
-    border:1px solid #fecaca;
 
-    color:#991b1b;
+        .summary-body {
 
-    padding:16px 18px;
+            padding:
+                10px 22px 22px;
+        }
 
-    border-radius:12px;
 
-    margin-bottom:22px;
+        .produit {
 
-    font-size:14px;
-}
+            display:
+                flex;
 
+            align-items:
+                center;
 
-.erreurs-title{
+            gap:
+                14px;
 
-    font-weight:800;
+            padding:
+                17px 0;
 
-    margin-bottom:8px;
-}
+            border-bottom:
+                1px solid #eef0f3;
+        }
 
 
-.erreurs ul{
+        .produit:last-child {
 
-    margin-left:20px;
-}
+            border-bottom:
+                none;
+        }
 
 
-.erreurs li{
+        /* =====================================================
+           IMAGE PRODUIT
+        ===================================================== */
 
-    margin-bottom:4px;
-}
+        .image-wrapper {
 
+            width:
+                78px;
 
-/* =====================================================
-   BOUTON
-===================================================== */
+            height:
+                78px;
 
-.btn-payer{
+            flex-shrink:
+                0;
 
-    width:100%;
+            border-radius:
+                12px;
 
-    height:54px;
+            overflow:
+                hidden;
 
-    border:0;
+            background:
+                #f3f4f6;
 
-    border-radius:11px;
+            border:
+                1px solid #e5e7eb;
 
-    background:#2563eb;
+            display:
+                flex;
 
-    color:#ffffff;
+            align-items:
+                center;
 
-    font-family:inherit;
+            justify-content:
+                center;
+        }
 
-    font-size:15px;
 
-    font-weight:800;
+        .image-wrapper img {
 
-    cursor:pointer;
+            width:
+                100%;
 
-    display:flex;
+            height:
+                100%;
 
-    align-items:center;
+            object-fit:
+                cover;
 
-    justify-content:center;
+            display:
+                block;
+        }
 
-    gap:9px;
 
-    margin-top:8px;
+        .image-placeholder {
 
-    transition:
-        background .2s ease,
-        transform .2s ease,
-        box-shadow .2s ease;
-}
+            font-size:
+                28px;
 
+            color:
+                #9ca3af;
+        }
 
-.btn-payer:hover{
 
-    background:#1d4ed8;
+        /* =====================================================
+           INFORMATIONS PRODUIT
+        ===================================================== */
 
-    transform:translateY(-2px);
+        .produit-info {
 
-    box-shadow:
-        0 9px 22px rgba(37,99,235,.25);
-}
+            flex:
+                1;
 
+            min-width:
+                0;
+        }
 
-/* =====================================================
-   RÉSUMÉ COMMANDE
-===================================================== */
 
-.resume-card{
+        .produit-nom {
 
-    position:sticky;
+            font-size:
+                15px;
 
-    top:20px;
-}
+            font-weight:
+                700;
 
+            color:
+                #111827;
 
-.resume-title{
+            margin-bottom:
+                7px;
 
-    font-size:21px;
+            overflow:
+                hidden;
 
-    color:#111827;
+            text-overflow:
+                ellipsis;
 
-    font-weight:800;
+            white-space:
+                nowrap;
+        }
 
-    margin-bottom:5px;
-}
 
+        .produit-details {
 
-.resume-subtitle{
+            color:
+                #6b7280;
 
-    color:#9ca3af;
+            font-size:
+                13px;
 
-    font-size:13px;
+            line-height:
+                1.5;
+        }
 
-    margin-bottom:22px;
-}
 
+        .produit-total {
 
-/* =====================================================
-   PRODUIT RÉSUMÉ
-===================================================== */
+            font-size:
+                14px;
 
-.resume-product{
+            font-weight:
+                800;
 
-    display:grid;
+            color:
+                #111827;
 
-    grid-template-columns:58px minmax(0,1fr) auto;
+            white-space:
+                nowrap;
+        }
 
-    gap:12px;
 
-    align-items:center;
+        /* =====================================================
+           TOTAL
+        ===================================================== */
 
-    padding:13px 0;
+        .total-box {
 
-    border-bottom:1px solid #eef0f3;
-}
+            margin-top:
+                8px;
 
+            padding:
+                20px 0 4px;
 
-.resume-image{
+            border-top:
+                2px solid #111827;
 
-    width:58px;
+            display:
+                flex;
 
-    height:58px;
+            align-items:
+                center;
 
-    background:#f8fafc;
+            justify-content:
+                space-between;
+        }
 
-    border-radius:10px;
 
-    display:flex;
+        .total-label {
 
-    justify-content:center;
+            font-size:
+                16px;
 
-    align-items:center;
+            font-weight:
+                700;
+        }
 
-    overflow:hidden;
-}
 
+        .total-price {
 
-.resume-image img{
+            font-size:
+                22px;
 
-    width:100%;
+            font-weight:
+                800;
 
-    height:100%;
+            color:
+                #f97316;
+        }
 
-    object-fit:contain;
 
-    padding:5px;
-}
+        /* =====================================================
+           INFO PAIEMENT
+        ===================================================== */
 
+        .info-paiement {
 
-.resume-product-name{
+            margin:
+                20px 0 0;
 
-    font-size:14px;
+            padding:
+                15px;
 
-    font-weight:700;
+            border-radius:
+                10px;
 
-    color:#111827;
+            background:
+                #fff7ed;
 
-    overflow:hidden;
+            border:
+                1px solid #fed7aa;
 
-    white-space:nowrap;
+            color:
+                #9a3412;
 
-    text-overflow:ellipsis;
+            font-size:
+                13px;
 
-    margin-bottom:5px;
-}
+            line-height:
+                1.6;
+        }
 
 
-.resume-product-quantity{
+        .info-paiement strong {
 
-    color:#9ca3af;
+            display:
+                block;
 
-    font-size:12px;
-}
+            margin-bottom:
+                4px;
+        }
 
 
-.resume-product-price{
+        /* =====================================================
+           RESPONSIVE TABLETTE
+        ===================================================== */
 
-    font-size:13px;
+        @media (max-width: 950px) {
 
-    font-weight:800;
+            .checkout {
 
-    color:#374151;
+                grid-template-columns:
+                    1fr;
+            }
 
-    text-align:right;
 
-    white-space:nowrap;
-}
+            .summary-card {
 
+                position:
+                    static;
+            }
 
-/* =====================================================
-   RÉSUMÉ TOTAL
-===================================================== */
+        }
 
-.resume-details{
 
-    margin-top:20px;
-}
+        /* =====================================================
+           RESPONSIVE MOBILE
+        ===================================================== */
 
+        @media (max-width: 600px) {
 
-.resume-line{
+            .top-header {
 
-    display:flex;
+                padding:
+                    0 4%;
 
-    justify-content:space-between;
+                height:
+                    64px;
+            }
 
-    align-items:center;
 
-    margin-bottom:13px;
+            .logo {
 
-    color:#6b7280;
+                font-size:
+                    20px;
+            }
 
-    font-size:14px;
-}
 
+            .secure {
 
-.resume-line strong{
+                font-size:
+                    12px;
+            }
 
-    color:#374151;
-}
 
+            .container {
 
-.resume-divider{
+                width:
+                    94%;
 
-    height:1px;
+                margin:
+                    25px auto;
+            }
 
-    background:#e5e7eb;
 
-    margin:20px 0;
-}
+            .page-heading h1 {
 
+                font-size:
+                    25px;
+            }
 
-.resume-total{
 
-    display:flex;
+            .form-grid {
 
-    justify-content:space-between;
+                grid-template-columns:
+                    1fr;
 
-    align-items:end;
+                gap:
+                    0;
+            }
 
-    gap:15px;
-}
 
+            .form-group.full {
 
-.resume-total span{
+                grid-column:
+                    auto;
+            }
 
-    font-size:16px;
 
-    color:#374151;
+            .card-body {
 
-    font-weight:700;
-}
+                padding:
+                    20px;
+            }
 
 
-.resume-total strong{
+            .card-header {
 
-    font-size:25px;
+                padding:
+                    20px;
+            }
 
-    color:#16a34a;
 
-    font-weight:800;
+            .image-wrapper {
 
-    text-align:right;
-}
+                width:
+                    65px;
 
+                height:
+                    65px;
+            }
 
-/* =====================================================
-   NOTE PAIEMENT
-===================================================== */
 
-.payment-info{
+            .produit {
 
-    margin-top:22px;
+                gap:
+                    10px;
+            }
 
-    padding:14px;
 
-    background:#f0fdf4;
+            .produit-nom {
 
-    border:1px solid #dcfce7;
+                font-size:
+                    14px;
+            }
 
-    border-radius:10px;
 
-    display:flex;
+            .produit-total {
 
-    gap:10px;
+                font-size:
+                    13px;
+            }
 
-    align-items:flex-start;
-}
+        }
 
-
-.payment-info-icon{
-
-    font-size:18px;
-}
-
-
-.payment-info-text{
-
-    font-size:12px;
-
-    line-height:1.5;
-
-    color:#166534;
-}
-
-
-/* =====================================================
-   GARANTIES
-===================================================== */
-
-.checkout-guarantees{
-
-    display:grid;
-
-    grid-template-columns:
-        repeat(3,1fr);
-
-    gap:10px;
-
-    margin-top:22px;
-}
-
-
-.guarantee{
-
-    padding:12px 8px;
-
-    background:#f8fafc;
-
-    border-radius:9px;
-
-    text-align:center;
-
-    font-size:11px;
-
-    color:#6b7280;
-
-    line-height:1.4;
-}
-
-
-.guarantee-icon{
-
-    display:block;
-
-    font-size:18px;
-
-    margin-bottom:5px;
-}
-
-
-/* =====================================================
-   RESPONSIVE
-===================================================== */
-
-@media(max-width:900px){
-
-    .checkout-grid{
-
-        grid-template-columns:1fr;
-    }
-
-
-    .resume-card{
-
-        position:static;
-    }
-
-}
-
-
-@media(max-width:650px){
-
-    .checkout-container{
-
-        padding:
-            25px 12px
-            50px;
-    }
-
-
-    .checkout-header h1{
-
-        font-size:28px;
-    }
-
-
-    .steps{
-
-        width:100%;
-    }
-
-
-    .step{
-
-        font-size:11px;
-    }
-
-
-    .step-line{
-
-        margin:0 7px;
-    }
-
-
-    .step-number{
-
-        width:28px;
-
-        height:28px;
-
-        font-size:12px;
-    }
-
-
-    .checkout-card{
-
-        padding:22px 18px;
-
-        border-radius:16px;
-    }
-
-
-    .form-row{
-
-        grid-template-columns:1fr;
-
-        gap:0;
-    }
-
-
-    .checkout-guarantees{
-
-        grid-template-columns:1fr;
-    }
-
-}
-
-
-@media(max-width:400px){
-
-    .step span:not(.step-number){
-
-        display:none;
-    }
-
-
-    .step{
-
-        flex:0 0 auto;
-    }
-
-
-    .step-line{
-
-        flex:1;
-    }
-
-}
-
-</style>
+    </style>
 
 </head>
 
+
 <body>
 
-<div class="checkout-container">
 
-<!-- =================================================
-     EN-TÊTE
-================================================== -->
+<!-- =========================================================
+     HEADER
+========================================================= -->
 
-<div class="checkout-header">
+<header class="top-header">
 
-
-<h1>
-    Finaliser ma commande
-</h1>
-
-<p>
-    Renseignez vos informations de livraison
-    pour continuer vers le paiement.
-</p>
-
-
-</div>
-
-<!-- =================================================
-     ÉTAPES
-================================================== -->
-
-<div class="steps">
-
-
-<div class="step active">
-
-    <span class="step-number">
-        1
-    </span>
-
-    <span>
-        Livraison
-    </span>
-
-</div>
-
-
-<div class="step-line"></div>
-
-
-<div class="step">
-
-    <span class="step-number">
-        2
-    </span>
-
-    <span>
-        Paiement
-    </span>
-
-</div>
-
-
-<div class="step-line"></div>
-
-
-<div class="step">
-
-    <span class="step-number">
-        3
-    </span>
-
-    <span>
-        Confirmation
-    </span>
-
-</div>
-
-
-</div>
-
-<!-- =================================================
-     ERREURS
-================================================== -->
-
-<?php if (!empty($erreurs)): ?>
-
-
-<div class="erreurs">
-
-    <div class="erreurs-title">
-
-        ⚠️ Vérifiez les informations suivantes :
-
+    <div class="logo">
+        Drink<span>Shop</span>
     </div>
 
-    <ul>
+    <div class="secure">
+        🔒 Commande sécurisée
+    </div>
 
-        <?php foreach ($erreurs as $erreur): ?>
-
-            <li>
-
-                <?= htmlspecialchars($erreur) ?>
-
-            </li>
-
-        <?php endforeach; ?>
-
-    </ul>
-
-</div>
+</header>
 
 
-<?php endif; ?>
+<!-- =========================================================
+     CONTENU
+========================================================= -->
 
-<!-- =================================================
-     GRID
-================================================== -->
-
-<div class="checkout-grid">
-
-<!-- =================================================
-     INFORMATIONS CLIENT
-================================================== -->
-
-<div class="checkout-card">
+<div class="container">
 
 
-    <div class="card-title">
+    <div class="page-heading">
 
-        <div class="card-title-icon">
+        <h1>
+            Finaliser votre commande
+        </h1>
 
-            🚚
-
-        </div>
-
-
-        <div>
-
-            <h2>
-                Informations de livraison
-            </h2>
-
-            <p>
-                Où devons-nous livrer votre commande ?
-            </p>
-
-        </div>
+        <p>
+            Renseignez vos informations de livraison
+            pour continuer vers le paiement.
+        </p>
 
     </div>
 
 
-    <form
-        method="POST"
-        action="commander.php"
-    >
+    <!-- =====================================================
+         ERREURS
+    ====================================================== -->
+
+    <?php if (!empty($erreurs)): ?>
+
+        <div class="erreurs">
+
+            <strong>
+                ⚠️ Vérifiez les informations suivantes :
+            </strong>
+
+            <ul>
+
+                <?php foreach ($erreurs as $erreur): ?>
+
+                    <li>
+
+                        <?= htmlspecialchars(
+                            $erreur,
+                            ENT_QUOTES,
+                            'UTF-8'
+                        ) ?>
+
+                    </li>
+
+                <?php endforeach; ?>
+
+            </ul>
+
+        </div>
+
+    <?php endif; ?>
 
 
-        <!-- PRÉNOM + NOM -->
-
-        <div class="form-row">
+    <div class="checkout">
 
 
-            <div class="form-group">
+        <!-- =================================================
+             FORMULAIRE CLIENT
+        ================================================== -->
 
-                <label for="prenom">
+        <div class="card">
 
-                    Prénom
-                    <span class="required">*</span>
+            <div class="card-header">
 
-                </label>
+                <h2>
+                    Informations de livraison
+                </h2>
+
+                <p>
+                    Ces informations seront enregistrées
+                    avec votre commande.
+                </p>
+
+            </div>
 
 
-                <div class="input-wrapper">
+            <div class="card-body">
 
-                    <span class="input-icon">
-                        👤
-                    </span>
+                <form
+                    method="POST"
+                    action=""
+                    autocomplete="on"
+                >
 
 
-                    <input
-                        type="text"
-                        id="prenom"
-                        name="prenom"
-                        value="<?= htmlspecialchars($prenom) ?>"
-                        placeholder="Votre prénom"
-                        autocomplete="given-name"
-                        required
+                    <div class="form-grid">
+
+
+                        <!-- NOM -->
+
+                        <div class="form-group">
+
+                            <label for="nom">
+
+                                Nom
+                                <span class="required">*</span>
+
+                            </label>
+
+                            <input
+                                type="text"
+                                id="nom"
+                                name="nom"
+                                maxlength="100"
+                                placeholder="Votre nom"
+                                value="<?= htmlspecialchars(
+                                    $nom,
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ) ?>"
+                                required
+                            >
+
+                        </div>
+
+
+                        <!-- PRÉNOM -->
+
+                        <div class="form-group">
+
+                            <label for="prenom">
+
+                                Prénom
+                                <span class="required">*</span>
+
+                            </label>
+
+                            <input
+                                type="text"
+                                id="prenom"
+                                name="prenom"
+                                maxlength="100"
+                                placeholder="Votre prénom"
+                                value="<?= htmlspecialchars(
+                                    $prenom,
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ) ?>"
+                                required
+                            >
+
+                        </div>
+
+
+                        <!-- TELEPHONE -->
+
+                        <div class="form-group">
+
+                            <label for="telephone">
+
+                                Téléphone
+                                <span class="required">*</span>
+
+                            </label>
+
+                            <input
+                                type="tel"
+                                id="telephone"
+                                name="telephone"
+                                maxlength="30"
+                                placeholder="+224 6XX XX XX XX"
+                                value="<?= htmlspecialchars(
+                                    $telephone,
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ) ?>"
+                                required
+                            >
+
+                        </div>
+
+
+                        <!-- EMAIL -->
+
+                        <div class="form-group">
+
+                            <label for="email">
+
+                                Adresse email
+                                <span class="required">*</span>
+
+                            </label>
+
+                            <input
+                                type="email"
+                                id="email"
+                                name="email"
+                                maxlength="150"
+                                placeholder="exemple@email.com"
+                                value="<?= htmlspecialchars(
+                                    $email,
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ) ?>"
+                                required
+                            >
+
+                        </div>
+
+
+                        <!-- ADRESSE -->
+
+                        <div class="form-group full">
+
+                            <label for="adresse">
+
+                                Adresse de livraison
+                                <span class="required">*</span>
+
+                            </label>
+
+                            <textarea
+                                id="adresse"
+                                name="adresse"
+                                placeholder="Quartier, rue, commune, ville..."
+                                required
+                            ><?= htmlspecialchars(
+                                $adresse,
+                                ENT_QUOTES,
+                                'UTF-8'
+                            ) ?></textarea>
+
+                        </div>
+
+
+                    </div>
+
+
+                    <!-- BOUTON -->
+
+                    <button
+                        type="submit"
+                        class="btn"
                     >
 
-                </div>
+                        Continuer vers le paiement
+                        →
+                        
+                    </button>
+
+
+                </form>
+
+            </div>
+
+        </div>
+
+
+        <!-- =================================================
+             RÉSUMÉ COMMANDE
+        ================================================== -->
+
+        <div class="card summary-card">
+
+
+            <div class="card-header">
+
+                <h2>
+                    Votre commande
+                </h2>
+
+                <p>
+
+                    <?= count($produits_panier) ?>
+
+                    produit<?= count($produits_panier) > 1 ? 's' : '' ?>
+
+                </p>
 
             </div>
 
 
-            <div class="form-group">
-
-                <label for="nom">
-
-                    Nom
-                    <span class="required">*</span>
-
-                </label>
+            <div class="summary-body">
 
 
-                <div class="input-wrapper">
+                <?php foreach (
+                    $produits_panier
+                    as $produit
+                ): ?>
 
-                    <span class="input-icon">
-                        👤
+
+                    <?php
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | GESTION DE L'IMAGE
+                    |--------------------------------------------------------------------------
+                    |
+                    | Si la base contient :
+                    | images/boisson.jpg
+                    | le chemin est utilisé directement.
+                    |
+                    | Si aucun chemin n'est fourni,
+                    | image.png est utilisé.
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $image =
+                        trim(
+                            (string)
+                            ($produit['image'] ?? '')
+                        );
+
+
+                    if ($image === '') {
+
+                        $image =
+                            'image.png';
+                    }
+
+                    ?>
+
+
+                    <div class="produit">
+
+
+                        <!-- IMAGE -->
+
+                        <div class="image-wrapper">
+
+                            <img
+                                src="<?= htmlspecialchars(
+                                    $image,
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ) ?>"
+                                alt="<?= htmlspecialchars(
+                                    $produit['nom'],
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ) ?>"
+                                onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
+                            >
+
+                            <div
+                                class="image-placeholder"
+                                style="display:none;"
+                            >
+                                🥤
+                            </div>
+
+                        </div>
+
+
+                        <!-- INFORMATIONS -->
+
+                        <div class="produit-info">
+
+
+                            <div class="produit-nom">
+
+                                <?= htmlspecialchars(
+                                    $produit['nom'],
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ) ?>
+
+                            </div>
+
+
+                            <div class="produit-details">
+
+                                <?= (int)
+                                    $produit['quantite']
+                                ?>
+
+                                ×
+
+                                <?= number_format(
+                                    (float)
+                                    $produit['prix'],
+                                    0,
+                                    ',',
+                                    ' '
+                                ) ?>
+
+                                FCFA
+
+                            </div>
+
+
+                        </div>
+
+
+                        <!-- SOUS-TOTAL -->
+
+                        <div class="produit-total">
+
+                            <?= number_format(
+                                (float)
+                                $produit['sous_total'],
+                                0,
+                                ',',
+                                ' '
+                            ) ?>
+
+                            FCFA
+
+                        </div>
+
+
+                    </div>
+
+
+                <?php endforeach; ?>
+
+
+                <!-- TOTAL -->
+
+                <div class="total-box">
+
+                    <span class="total-label">
+
+                        Total
+
                     </span>
 
-
-                    <input
-                        type="text"
-                        id="nom"
-                        name="nom"
-                        value="<?= htmlspecialchars($nom) ?>"
-                        placeholder="Votre nom"
-                        autocomplete="family-name"
-                        required
-                    >
-
-                </div>
-
-            </div>
-
-
-        </div>
-
-
-        <!-- TÉLÉPHONE -->
-
-        <div class="form-group">
-
-            <label for="telephone">
-
-                Numéro de téléphone
-                <span class="required">*</span>
-
-            </label>
-
-
-            <div class="input-wrapper">
-
-                <span class="input-icon">
-                    📱
-                </span>
-
-
-                <input
-                    type="tel"
-                    id="telephone"
-                    name="telephone"
-                    value="<?= htmlspecialchars($telephone) ?>"
-                    placeholder="Exemple : 620 00 00 00"
-                    autocomplete="tel"
-                    required
-                >
-
-            </div>
-
-        </div>
-
-
-        <!-- EMAIL -->
-
-        <div class="form-group">
-
-            <label for="email">
-
-                Adresse email
-                <span style="color:#9ca3af;font-weight:400;">
-                    (facultatif)
-                </span>
-
-            </label>
-
-
-            <div class="input-wrapper">
-
-                <span class="input-icon">
-                    ✉️
-                </span>
-
-
-                <input
-                    type="email"
-                    id="email"
-                    name="email"
-                    value="<?= htmlspecialchars($email) ?>"
-                    placeholder="exemple@email.com"
-                    autocomplete="email"
-                >
-
-            </div>
-
-        </div>
-
-
-        <!-- ADRESSE -->
-
-        <div class="form-group">
-
-            <label for="adresse">
-
-                Adresse de livraison
-                <span class="required">*</span>
-
-            </label>
-
-
-            <textarea
-                id="adresse"
-                name="adresse"
-                placeholder="Indiquez votre quartier, secteur, ville et toute précision utile pour le livreur..."
-                autocomplete="street-address"
-                required
-            ><?= htmlspecialchars($adresse) ?></textarea>
-
-        </div>
-
-
-        <!-- BOUTON -->
-
-        <button
-            type="submit"
-            class="btn-payer"
-        >
-
-            🔒
-
-            Confirmer la commande et continuer vers le paiement
-
-            →
-
-        </button>
-
-
-    </form>
-
-
-</div>
-
-
-<!-- =================================================
-     RÉSUMÉ
-================================================== -->
-
-<div class="checkout-card resume-card">
-
-
-    <h2 class="resume-title">
-
-        Votre commande
-
-    </h2>
-
-
-    <p class="resume-subtitle">
-
-        <?= $nombre_articles ?>
-
-        article<?= $nombre_articles > 1 ? 's' : '' ?>
-
-        dans votre panier
-
-    </p>
-
-
-    <!-- PRODUITS -->
-
-    <?php foreach ($produits as $produit): ?>
-
-
-        <?php
-
-        if (!empty($produit['image'])) {
-
-            $image =
-                "image/" . $produit['image'];
-
-        } else {
-
-            $image =
-                "image/default.png";
-        }
-
-        ?>
-
-
-        <div class="resume-product">
-
-
-            <div class="resume-image">
-
-                <img
-                    src="<?= htmlspecialchars($image) ?>"
-                    alt="<?= htmlspecialchars($produit['nom']) ?>"
-                    onerror="this.onerror=null;this.src='image/default.png';"
-                >
-
-            </div>
-
-
-            <div>
-
-                <div class="resume-product-name">
-
-                    <?= htmlspecialchars(
-                        $produit['nom']
-                    ) ?>
+                    <span class="total-price">
+
+                        <?= number_format(
+                            (float)
+                            $montant_total,
+                            0,
+                            ',',
+                            ' '
+                        ) ?>
+
+                        FCFA
+
+                    </span>
 
                 </div>
 
 
-                <div class="resume-product-quantity">
+                <!-- INFORMATION PAIEMENT -->
 
-                    Quantité :
-                    <?= (int)$produit['quantite'] ?>
+                <div class="info-paiement">
 
-                    ×
+                    <strong>
+                        🔒 Paiement sécurisé
+                    </strong>
 
-                    <?= number_format(
-                        $produit['prix'],
-                        0,
-                        ',',
-                        ' '
-                    ) ?>
-
-                    GNF
+                    Après validation de vos informations,
+                    vous serez redirigé vers la page de paiement
+                    pour régler votre commande.
 
                 </div>
 
-            </div>
-
-
-            <div class="resume-product-price">
-
-                <?= number_format(
-                    $produit['sous_total'],
-                    0,
-                    ',',
-                    ' '
-                ) ?>
-
-                GNF
 
             </div>
-
-
-        </div>
-
-
-    <?php endforeach; ?>
-
-
-    <!-- TOTAL -->
-
-    <div class="resume-details">
-
-
-        <div class="resume-line">
-
-            <span>
-                Sous-total
-            </span>
-
-            <strong>
-
-                <?= number_format(
-                    $total_general,
-                    0,
-                    ',',
-                    ' '
-                ) ?>
-
-                GNF
-
-            </strong>
-
-        </div>
-
-
-        <div class="resume-line">
-
-            <span>
-                Livraison
-            </span>
-
-            <strong>
-                À confirmer
-            </strong>
-
-        </div>
-
-
-        <div class="resume-divider"></div>
-
-
-        <div class="resume-total">
-
-            <span>
-                Total à payer
-            </span>
-
-
-            <strong>
-
-                <?= number_format(
-                    $total_general,
-                    0,
-                    ',',
-                    ' '
-                ) ?>
-
-                GNF
-
-            </strong>
 
         </div>
 
 
     </div>
 
-
-    <!-- INFORMATION PAIEMENT -->
-
-    <div class="payment-info">
-
-
-        <div class="payment-info-icon">
-
-            🔐
-
-        </div>
-
-
-        <div class="payment-info-text">
-
-            Après confirmation de votre commande,
-            vous serez automatiquement redirigé vers
-            la page de paiement.
-
-        </div>
-
-
-    </div>
-
-
-    <!-- GARANTIES -->
-
-    <div class="checkout-guarantees">
-
-
-        <div class="guarantee">
-
-            <span class="guarantee-icon">
-                🔒
-            </span>
-
-            Paiement sécurisé
-
-        </div>
-
-
-        <div class="guarantee">
-
-            <span class="guarantee-icon">
-                🚚
-            </span>
-
-            Livraison
-
-        </div>
-
-
-        <div class="guarantee">
-
-            <span class="guarantee-icon">
-                ✓
-            </span>
-
-            Commande suivie
-
-        </div>
-
-
-    </div>
-
-
 </div>
 
-
-</div>
-
-</div>
 
 </body>
 
 </html>
+

@@ -1052,7 +1052,7 @@ try {
                                 class="btn"
                                 href="produit.php?id_boisson=<?= (int)$p['id_boisson'] ?>"
                             >
-                                👁️ Voir
+                                👁️ Voir le Panier
                             </a>
 
                         </div>
