@@ -1,10 +1,10 @@
 <?php
 
-$host = getenv('MYSQLHOST');
-$port = getenv('MYSQLPORT');
-$dbname = getenv('MYSQLDATABASE');
-$user = getenv('MYSQLUSER');
-$password = getenv('MYSQLPASSWORD');
+$host = 'iriguchi.proxy.rlwy.net';
+$port = '30477';
+$dbname = 'railway';
+$user = 'root';
+$password = 'PvWnlqdTgjrgrbqBXMuEkafaUeAngYKS';
 
 try {
 
