@@ -12,12 +12,9 @@ header('Content-Type: text/html; charset=utf-8');
 // =====================================================
 
 if (empty($_SESSION['panier'])) {
-
     header("Location: panier.php");
-
     exit();
 }
-
 
 $panier = $_SESSION['panier'];
 
@@ -33,14 +30,11 @@ $total_general = 0;
 foreach ($panier as $id_boisson => $quantite) {
 
     $id_boisson = (int)$id_boisson;
-
     $quantite = (int)$quantite;
-
 
     if ($quantite <= 0) {
         continue;
     }
-
 
     $stmt = $pdo->prepare("
         SELECT
@@ -58,7 +52,6 @@ foreach ($panier as $id_boisson => $quantite) {
 
     $boisson = $stmt->fetch(PDO::FETCH_ASSOC);
 
-
     if ($boisson) {
 
         // Vérifier le stock
@@ -69,7 +62,6 @@ foreach ($panier as $id_boisson => $quantite) {
             $_SESSION['panier'][$id_boisson] = $quantite;
         }
 
-
         if ($quantite <= 0) {
 
             unset($_SESSION['panier'][$id_boisson]);
@@ -77,17 +69,13 @@ foreach ($panier as $id_boisson => $quantite) {
             continue;
         }
 
-
         $boisson['quantite'] = $quantite;
-
 
         $boisson['sous_total'] =
             (float)$boisson['prix'] * $quantite;
 
-
         $total_general +=
             $boisson['sous_total'];
-
 
         $produits[] = $boisson;
     }
@@ -116,13 +104,9 @@ if (
 // =====================================================
 
 $nom = '';
-
 $prenom = '';
-
 $telephone = '';
-
 $email = '';
-
 $adresse = '';
 
 $erreurs = [];
@@ -134,22 +118,17 @@ $erreurs = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-
     $nom =
         trim($_POST['nom'] ?? '');
-
 
     $prenom =
         trim($_POST['prenom'] ?? '');
 
-
     $telephone =
         trim($_POST['telephone'] ?? '');
 
-
     $email =
         trim($_POST['email'] ?? '');
-
 
     $adresse =
         trim($_POST['adresse'] ?? '');
@@ -165,13 +144,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             "Veuillez saisir votre prénom.";
     }
 
-
     if ($nom === '') {
 
         $erreurs[] =
             "Veuillez saisir votre nom.";
     }
-
 
     if ($telephone === '') {
 
@@ -179,13 +156,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             "Veuillez saisir votre numéro de téléphone.";
     }
 
-
     if ($adresse === '') {
 
         $erreurs[] =
             "Veuillez saisir votre adresse de livraison.";
     }
-
 
     if (
         $email !== '' &&
@@ -231,11 +206,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     LIMIT 1
                 ");
 
-
                 $check->execute([
                     $numero_commande
                 ]);
-
 
             } while ($check->fetch());
 
@@ -245,7 +218,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // -----------------------------------------
 
             $id_utilisateur = null;
-
 
             if (
                 isset($_SESSION['user_id']) &&
@@ -260,6 +232,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // -----------------------------------------
             // Insérer la commande
             // -----------------------------------------
+
+            /*
+             * IMPORTANT :
+             * La colonne statut doit accepter :
+             *
+             * en_attente
+             * payee
+             * preparee
+             * expediee
+             * livree
+             * annulee
+             */
 
             $stmt = $pdo->prepare("
                 INSERT INTO commandes
@@ -280,7 +264,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     :id_utilisateur,
                     :numero_commande,
                     :montant_total,
-                    'en_attente',
+                    :statut,
                     NOW(),
                     :nom_client,
                     :prenom_client,
@@ -301,6 +285,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 ':montant_total' =>
                     $total_general,
+
+                ':statut' =>
+                    'en_attente',
 
                 ':nom_client' =>
                     $nom,
@@ -329,6 +316,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 (int)$pdo->lastInsertId();
 
 
+            if ($id_commande <= 0) {
+
+                throw new Exception(
+                    "Impossible de récupérer l'identifiant de la commande."
+                );
+            }
+
+
             // -----------------------------------------
             // Valider
             // -----------------------------------------
@@ -337,12 +332,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 
             // -----------------------------------------
-            // Mémoriser
+            // Mémoriser la commande
             // -----------------------------------------
 
             $_SESSION['id_commande'] =
                 $id_commande;
-
 
             $_SESSION['numero_commande'] =
                 $numero_commande;
@@ -367,13 +361,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit();
 
 
-        } catch (PDOException $e) {
+        } catch (Throwable $e) {
 
             if ($pdo->inTransaction()) {
 
                 $pdo->rollBack();
             }
-
 
             $erreurs[] =
                 "Erreur lors de l'enregistrement de la commande : " .
@@ -391,7 +384,6 @@ include 'header.php';
 // =====================================================
 
 $nombre_articles = 0;
-
 
 foreach ($produits as $produit) {
 
@@ -1296,24 +1288,24 @@ body{
 
 <div class="checkout-container">
 
-
 <!-- =================================================
      EN-TÊTE
 ================================================== -->
 
 <div class="checkout-header">
 
-    <h1>
-        Finaliser ma commande
-    </h1>
+```
+<h1>
+    Finaliser ma commande
+</h1>
 
-    <p>
-        Renseignez vos informations de livraison
-        pour continuer vers le paiement.
-    </p>
+<p>
+    Renseignez vos informations de livraison
+    pour continuer vers le paiement.
+</p>
+```
 
 </div>
-
 
 <!-- =================================================
      ÉTAPES
@@ -1321,54 +1313,53 @@ body{
 
 <div class="steps">
 
+```
+<div class="step active">
 
-    <div class="step active">
+    <span class="step-number">
+        1
+    </span>
 
-        <span class="step-number">
-            1
-        </span>
-
-        <span>
-            Livraison
-        </span>
-
-    </div>
-
-
-    <div class="step-line"></div>
-
-
-    <div class="step">
-
-        <span class="step-number">
-            2
-        </span>
-
-        <span>
-            Paiement
-        </span>
-
-    </div>
-
-
-    <div class="step-line"></div>
-
-
-    <div class="step">
-
-        <span class="step-number">
-            3
-        </span>
-
-        <span>
-            Confirmation
-        </span>
-
-    </div>
-
+    <span>
+        Livraison
+    </span>
 
 </div>
 
+
+<div class="step-line"></div>
+
+
+<div class="step">
+
+    <span class="step-number">
+        2
+    </span>
+
+    <span>
+        Paiement
+    </span>
+
+</div>
+
+
+<div class="step-line"></div>
+
+
+<div class="step">
+
+    <span class="step-number">
+        3
+    </span>
+
+    <span>
+        Confirmation
+    </span>
+
+</div>
+```
+
+</div>
 
 <!-- =================================================
      ERREURS
@@ -1376,33 +1367,33 @@ body{
 
 <?php if (!empty($erreurs)): ?>
 
-    <div class="erreurs">
+```
+<div class="erreurs">
 
-        <div class="erreurs-title">
+    <div class="erreurs-title">
 
-            ⚠️ Vérifiez les informations suivantes :
-
-        </div>
-
-
-        <ul>
-
-            <?php foreach ($erreurs as $erreur): ?>
-
-                <li>
-
-                    <?= htmlspecialchars($erreur) ?>
-
-                </li>
-
-            <?php endforeach; ?>
-
-        </ul>
+        ⚠️ Vérifiez les informations suivantes :
 
     </div>
 
-<?php endif; ?>
+    <ul>
 
+        <?php foreach ($erreurs as $erreur): ?>
+
+            <li>
+
+                <?= htmlspecialchars($erreur) ?>
+
+            </li>
+
+        <?php endforeach; ?>
+
+    </ul>
+
+</div>
+```
+
+<?php endif; ?>
 
 <!-- =================================================
      GRID
@@ -1410,125 +1401,54 @@ body{
 
 <div class="checkout-grid">
 
+```
+<!-- =================================================
+     INFORMATIONS CLIENT
+================================================== -->
 
-    <!-- =================================================
-         INFORMATIONS CLIENT
-    ================================================== -->
-
-    <div class="checkout-card">
-
-
-        <div class="card-title">
+<div class="checkout-card">
 
 
-            <div class="card-title-icon">
+    <div class="card-title">
 
-                🚚
+        <div class="card-title-icon">
 
-            </div>
-
-
-            <div>
-
-                <h2>
-                    Informations de livraison
-                </h2>
-
-                <p>
-                    Où devons-nous livrer votre commande ?
-                </p>
-
-            </div>
-
+            🚚
 
         </div>
 
 
-        <form
-            method="POST"
-            action="commander.php"
-        >
+        <div>
+
+            <h2>
+                Informations de livraison
+            </h2>
+
+            <p>
+                Où devons-nous livrer votre commande ?
+            </p>
+
+        </div>
+
+    </div>
 
 
-            <!-- PRÉNOM + NOM -->
-
-            <div class="form-row">
-
-
-                <div class="form-group">
-
-                    <label for="prenom">
-
-                        Prénom
-                        <span class="required">*</span>
-
-                    </label>
+    <form
+        method="POST"
+        action="commander.php"
+    >
 
 
-                    <div class="input-wrapper">
+        <!-- PRÉNOM + NOM -->
 
-                        <span class="input-icon">
-                            👤
-                        </span>
+        <div class="form-row">
 
-
-                        <input
-                            type="text"
-                            id="prenom"
-                            name="prenom"
-                            value="<?= htmlspecialchars($prenom) ?>"
-                            placeholder="Votre prénom"
-                            autocomplete="given-name"
-                            required
-                        >
-
-                    </div>
-
-                </div>
-
-
-                <div class="form-group">
-
-                    <label for="nom">
-
-                        Nom
-                        <span class="required">*</span>
-
-                    </label>
-
-
-                    <div class="input-wrapper">
-
-                        <span class="input-icon">
-                            👤
-                        </span>
-
-
-                        <input
-                            type="text"
-                            id="nom"
-                            name="nom"
-                            value="<?= htmlspecialchars($nom) ?>"
-                            placeholder="Votre nom"
-                            autocomplete="family-name"
-                            required
-                        >
-
-                    </div>
-
-                </div>
-
-
-            </div>
-
-
-            <!-- TÉLÉPHONE -->
 
             <div class="form-group">
 
-                <label for="telephone">
+                <label for="prenom">
 
-                    Numéro de téléphone
+                    Prénom
                     <span class="required">*</span>
 
                 </label>
@@ -1537,17 +1457,17 @@ body{
                 <div class="input-wrapper">
 
                     <span class="input-icon">
-                        📱
+                        👤
                     </span>
 
 
                     <input
-                        type="tel"
-                        id="telephone"
-                        name="telephone"
-                        value="<?= htmlspecialchars($telephone) ?>"
-                        placeholder="Exemple : 620 00 00 00"
-                        autocomplete="tel"
+                        type="text"
+                        id="prenom"
+                        name="prenom"
+                        value="<?= htmlspecialchars($prenom) ?>"
+                        placeholder="Votre prénom"
+                        autocomplete="given-name"
                         required
                     >
 
@@ -1556,16 +1476,12 @@ body{
             </div>
 
 
-            <!-- EMAIL -->
-
             <div class="form-group">
 
-                <label for="email">
+                <label for="nom">
 
-                    Adresse email
-                    <span style="color:#9ca3af;font-weight:400;">
-                        (facultatif)
-                    </span>
+                    Nom
+                    <span class="required">*</span>
 
                 </label>
 
@@ -1573,17 +1489,18 @@ body{
                 <div class="input-wrapper">
 
                     <span class="input-icon">
-                        ✉️
+                        👤
                     </span>
 
 
                     <input
-                        type="email"
-                        id="email"
-                        name="email"
-                        value="<?= htmlspecialchars($email) ?>"
-                        placeholder="exemple@email.com"
-                        autocomplete="email"
+                        type="text"
+                        id="nom"
+                        name="nom"
+                        value="<?= htmlspecialchars($nom) ?>"
+                        placeholder="Votre nom"
+                        autocomplete="family-name"
+                        required
                     >
 
                 </div>
@@ -1591,147 +1508,203 @@ body{
             </div>
 
 
-            <!-- ADRESSE -->
-
-            <div class="form-group">
-
-                <label for="adresse">
-
-                    Adresse de livraison
-                    <span class="required">*</span>
-
-                </label>
+        </div>
 
 
-                <textarea
-                    id="adresse"
-                    name="adresse"
-                    placeholder="Indiquez votre quartier, secteur, ville et toute précision utile pour le livreur..."
-                    autocomplete="street-address"
+        <!-- TÉLÉPHONE -->
+
+        <div class="form-group">
+
+            <label for="telephone">
+
+                Numéro de téléphone
+                <span class="required">*</span>
+
+            </label>
+
+
+            <div class="input-wrapper">
+
+                <span class="input-icon">
+                    📱
+                </span>
+
+
+                <input
+                    type="tel"
+                    id="telephone"
+                    name="telephone"
+                    value="<?= htmlspecialchars($telephone) ?>"
+                    placeholder="Exemple : 620 00 00 00"
+                    autocomplete="tel"
                     required
-                ><?= htmlspecialchars($adresse) ?></textarea>
+                >
+
+            </div>
+
+        </div>
+
+
+        <!-- EMAIL -->
+
+        <div class="form-group">
+
+            <label for="email">
+
+                Adresse email
+                <span style="color:#9ca3af;font-weight:400;">
+                    (facultatif)
+                </span>
+
+            </label>
+
+
+            <div class="input-wrapper">
+
+                <span class="input-icon">
+                    ✉️
+                </span>
+
+
+                <input
+                    type="email"
+                    id="email"
+                    name="email"
+                    value="<?= htmlspecialchars($email) ?>"
+                    placeholder="exemple@email.com"
+                    autocomplete="email"
+                >
+
+            </div>
+
+        </div>
+
+
+        <!-- ADRESSE -->
+
+        <div class="form-group">
+
+            <label for="adresse">
+
+                Adresse de livraison
+                <span class="required">*</span>
+
+            </label>
+
+
+            <textarea
+                id="adresse"
+                name="adresse"
+                placeholder="Indiquez votre quartier, secteur, ville et toute précision utile pour le livreur..."
+                autocomplete="street-address"
+                required
+            ><?= htmlspecialchars($adresse) ?></textarea>
+
+        </div>
+
+
+        <!-- BOUTON -->
+
+        <button
+            type="submit"
+            class="btn-payer"
+        >
+
+            🔒
+
+            Confirmer la commande et continuer vers le paiement
+
+            →
+
+        </button>
+
+
+    </form>
+
+
+</div>
+
+
+<!-- =================================================
+     RÉSUMÉ
+================================================== -->
+
+<div class="checkout-card resume-card">
+
+
+    <h2 class="resume-title">
+
+        Votre commande
+
+    </h2>
+
+
+    <p class="resume-subtitle">
+
+        <?= $nombre_articles ?>
+
+        article<?= $nombre_articles > 1 ? 's' : '' ?>
+
+        dans votre panier
+
+    </p>
+
+
+    <!-- PRODUITS -->
+
+    <?php foreach ($produits as $produit): ?>
+
+
+        <?php
+
+        if (!empty($produit['image'])) {
+
+            $image =
+                "image/" . $produit['image'];
+
+        } else {
+
+            $image =
+                "image/default.png";
+        }
+
+        ?>
+
+
+        <div class="resume-product">
+
+
+            <div class="resume-image">
+
+                <img
+                    src="<?= htmlspecialchars($image) ?>"
+                    alt="<?= htmlspecialchars($produit['nom']) ?>"
+                    onerror="this.onerror=null;this.src='image/default.png';"
+                >
 
             </div>
 
 
-            <!-- BOUTON -->
+            <div>
 
-            <button
-                type="submit"
-                class="btn-payer"
-            >
+                <div class="resume-product-name">
 
-                🔒
-
-                Confirmer la commande et continuer vers le paiement
-
-                →
-
-            </button>
-
-
-        </form>
-
-
-    </div>
-
-
-    <!-- =================================================
-         RÉSUMÉ
-    ================================================== -->
-
-    <div class="checkout-card resume-card">
-
-
-        <h2 class="resume-title">
-
-            Votre commande
-
-        </h2>
-
-
-        <p class="resume-subtitle">
-
-            <?= $nombre_articles ?>
-
-            article<?= $nombre_articles > 1 ? 's' : '' ?>
-
-            dans votre panier
-
-        </p>
-
-
-        <!-- PRODUITS -->
-
-        <?php foreach ($produits as $produit): ?>
-
-
-            <?php
-
-            if (!empty($produit['image'])) {
-
-                $image =
-                    "image/" . $produit['image'];
-
-            } else {
-
-                $image =
-                    "image/default.png";
-            }
-
-            ?>
-
-
-            <div class="resume-product">
-
-
-                <div class="resume-image">
-
-                    <img
-                        src="<?= htmlspecialchars($image) ?>"
-                        alt="<?= htmlspecialchars($produit['nom']) ?>"
-                        onerror="this.onerror=null;this.src='image/default.png';"
-                    >
+                    <?= htmlspecialchars(
+                        $produit['nom']
+                    ) ?>
 
                 </div>
 
 
-                <div>
+                <div class="resume-product-quantity">
 
-                    <div class="resume-product-name">
+                    Quantité :
+                    <?= (int)$produit['quantite'] ?>
 
-                        <?= htmlspecialchars(
-                            $produit['nom']
-                        ) ?>
-
-                    </div>
-
-
-                    <div class="resume-product-quantity">
-
-                        Quantité :
-                        <?= (int)$produit['quantite'] ?>
-
-                        ×
-
-                        <?= number_format(
-                            $produit['prix'],
-                            0,
-                            ',',
-                            ' '
-                        ) ?>
-
-                        GNF
-
-                    </div>
-
-                </div>
-
-
-                <div class="resume-product-price">
+                    ×
 
                     <?= number_format(
-                        $produit['sous_total'],
+                        $produit['prix'],
                         0,
                         ',',
                         ' '
@@ -1741,75 +1714,19 @@ body{
 
                 </div>
 
-
             </div>
 
 
-        <?php endforeach; ?>
+            <div class="resume-product-price">
 
+                <?= number_format(
+                    $produit['sous_total'],
+                    0,
+                    ',',
+                    ' '
+                ) ?>
 
-        <!-- TOTAL -->
-
-        <div class="resume-details">
-
-
-            <div class="resume-line">
-
-                <span>
-                    Sous-total
-                </span>
-
-                <strong>
-
-                    <?= number_format(
-                        $total_general,
-                        0,
-                        ',',
-                        ' '
-                    ) ?>
-
-                    GNF
-
-                </strong>
-
-            </div>
-
-
-            <div class="resume-line">
-
-                <span>
-                    Livraison
-                </span>
-
-                <strong>
-                    À confirmer
-                </strong>
-
-            </div>
-
-
-            <div class="resume-divider"></div>
-
-
-            <div class="resume-total">
-
-                <span>
-                    Total à payer
-                </span>
-
-
-                <strong>
-
-                    <?= number_format(
-                        $total_general,
-                        0,
-                        ',',
-                        ' '
-                    ) ?>
-
-                    GNF
-
-                </strong>
+                GNF
 
             </div>
 
@@ -1817,73 +1734,145 @@ body{
         </div>
 
 
-        <!-- INFORMATION PAIEMENT -->
-
-        <div class="payment-info">
+    <?php endforeach; ?>
 
 
-            <div class="payment-info-icon">
+    <!-- TOTAL -->
 
-                🔐
-
-            </div>
+    <div class="resume-details">
 
 
-            <div class="payment-info-text">
+        <div class="resume-line">
 
-                Après confirmation de votre commande,
-                vous serez automatiquement redirigé vers
-                la page de paiement.
+            <span>
+                Sous-total
+            </span>
 
-            </div>
+            <strong>
 
+                <?= number_format(
+                    $total_general,
+                    0,
+                    ',',
+                    ' '
+                ) ?>
+
+                GNF
+
+            </strong>
 
         </div>
 
 
-        <!-- GARANTIES -->
+        <div class="resume-line">
 
-        <div class="checkout-guarantees">
-
-
-            <div class="guarantee">
-
-                <span class="guarantee-icon">
-                    🔒
-                </span>
-
-                Paiement sécurisé
-
-            </div>
-
-
-            <div class="guarantee">
-
-                <span class="guarantee-icon">
-                    🚚
-                </span>
-
+            <span>
                 Livraison
+            </span>
 
-            </div>
+            <strong>
+                À confirmer
+            </strong>
+
+        </div>
 
 
-            <div class="guarantee">
+        <div class="resume-divider"></div>
 
-                <span class="guarantee-icon">
-                    ✓
-                </span>
 
-                Commande suivie
+        <div class="resume-total">
 
-            </div>
+            <span>
+                Total à payer
+            </span>
 
+
+            <strong>
+
+                <?= number_format(
+                    $total_general,
+                    0,
+                    ',',
+                    ' '
+                ) ?>
+
+                GNF
+
+            </strong>
 
         </div>
 
 
     </div>
 
+
+    <!-- INFORMATION PAIEMENT -->
+
+    <div class="payment-info">
+
+
+        <div class="payment-info-icon">
+
+            🔐
+
+        </div>
+
+
+        <div class="payment-info-text">
+
+            Après confirmation de votre commande,
+            vous serez automatiquement redirigé vers
+            la page de paiement.
+
+        </div>
+
+
+    </div>
+
+
+    <!-- GARANTIES -->
+
+    <div class="checkout-guarantees">
+
+
+        <div class="guarantee">
+
+            <span class="guarantee-icon">
+                🔒
+            </span>
+
+            Paiement sécurisé
+
+        </div>
+
+
+        <div class="guarantee">
+
+            <span class="guarantee-icon">
+                🚚
+            </span>
+
+            Livraison
+
+        </div>
+
+
+        <div class="guarantee">
+
+            <span class="guarantee-icon">
+                ✓
+            </span>
+
+            Commande suivie
+
+        </div>
+
+
+    </div>
+
+
+</div>
+```
 
 </div>
 
